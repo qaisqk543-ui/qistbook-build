@@ -112,7 +112,29 @@ class _KistBookAppState extends State<KistBookApp> {
     _boot();
   }
 
+  int _bootSeq = 0;
+
   Future<void> _boot() async {
+    // Safety net: boot kabhi bhi eternal spinner par nahi atke gi.
+    // 30 second me na khule ya koi exception aaye to friendly error
+    // screen + "Dobara try karein" — pehle _boot me try/catch nahi tha,
+    // is liye exception aane par spinner hamesha rehta tha.
+    final seq = ++_bootSeq;
+    try {
+      await _bootInner().timeout(const Duration(seconds: 30));
+    } catch (e) {
+      ErrorLog.log('Startup', e);
+      if (mounted && seq == _bootSeq) {
+        setState(() {
+          _loading = false;
+          _openError =
+              'App khulne me der ho rahi hai. Koi baat nahi — neeche button dabao.';
+        });
+      }
+    }
+  }
+
+  Future<void> _bootInner() async {
     final hasAny = await widget.auth.checkHasAnyUser();
     var legacy = false;
     if (!hasAny) {
