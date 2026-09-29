@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart' hide FirebaseService;
 import 'package:flutter/material.dart';
@@ -18,27 +20,55 @@ import 'services/firebase_service.dart';
 /// (Set up Firebase later per README "Firebase setup" to enable login+sync.)
 bool firebaseReady = false;
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    // Reads google-services.json (Android) / GoogleService-Info.plist (iOS).
-    // See README "Firebase setup".
-    await Firebase.initializeApp();
-    firebaseReady = true;
-    FirebaseService.enabled = true;
-  } catch (_) {
-    firebaseReady = false; // no Firebase config yet → offline mode
-  }
-  final store = CustomerStore();
-  await store.init();
-  try {
-    await CallReminderService.init();
-  } catch (_) {
-    // Reminder system must never block app launch.
-  }
-  CallReminderService.lookupCustomer = store.findByAccountNo;
-  runApp(KistBookApp(store: store));
-  await CallReminderService.handleLaunchFromNotification();
+  // Diagnostic: never die silently — show the crash reason on screen
+  // instead of just closing, so it can be photographed and fixed.
+  FlutterError.onError = (FlutterErrorDetails details) {
+    _showCrashScreen(details.exception, details.stack);
+  };
+  runZonedGuarded(() async {
+    try {
+      // Reads google-services.json (Android) / GoogleService-Info.plist (iOS).
+      // See README "Firebase setup".
+      await Firebase.initializeApp();
+      firebaseReady = true;
+      FirebaseService.enabled = true;
+    } catch (_) {
+      firebaseReady = false; // no Firebase config yet → offline mode
+    }
+    final store = CustomerStore();
+    await store.init();
+    try {
+      await CallReminderService.init();
+    } catch (_) {
+      // Reminder system must never block app launch.
+    }
+    CallReminderService.lookupCustomer = store.findByAccountNo;
+    runApp(KistBookApp(store: store));
+    await CallReminderService.handleLaunchFromNotification();
+  }, (Object error, StackTrace stack) {
+    _showCrashScreen(error, stack);
+  });
+}
+
+/// Shows the crash reason on screen so it can be photographed/reported
+/// instead of the app just closing.
+void _showCrashScreen(Object error, StackTrace? stack) {
+  runApp(
+    MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('QistBook — Error')),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: SelectableText(
+            'App khulne me masla aaya:\n\n$error\n\n$stack',
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class KistBookApp extends StatelessWidget {
