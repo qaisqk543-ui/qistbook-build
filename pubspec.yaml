@@ -9,31 +9,31 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.6
-  provider: ^6.1.1
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.5
   # OCR - on-device text recognition for scanning printed pages
-  google_mlkit_text_recognition: ^0.13.1
+  google_mlkit_text_recognition: ^0.17.1
   # Pick images (camera/gallery) and PDF files
-  image_picker: ^1.0.7
+  image_picker: ^1.2.3
   file_picker: ^8.0.0
   # Render PDF pages to images so OCR can read them
   pdf_render: ^1.4.12
   # Firebase: login (phone OTP / email) + private per-user cloud sync
-  firebase_core: ^2.24.2
-  firebase_auth: ^4.15.3
-  cloud_firestore: ^4.13.6
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
+  cloud_firestore: ^6.10.0
   # Local database (offline cache; Firestore is the source of truth)
-  sqflite: ^2.3.2
+  sqflite: ^2.4.1
   path: ^1.8.3
-  path_provider: ^2.1.2
+  path_provider: ^2.1.5
   # Open WhatsApp chats + phone dialer
-  url_launcher: ^6.2.4
+  url_launcher: ^6.3.2
   # Send SMS directly from the phone (Android)
   telephony: ^0.2.0
   # Internet check + data-saver setting (social packages)
-  connectivity_plus: ^6.1.0
-  shared_preferences: ^2.3.2
-  intl: ^0.18.1
+  connectivity_plus: ^7.3.1
+  shared_preferences: ^2.5.3
+  intl: ^0.20.3
 
 dev_dependencies:
   flutter_test:
