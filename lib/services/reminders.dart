@@ -65,14 +65,27 @@ String toWhatsAppNumber(String phone) {
 }
 
 /// Open a WhatsApp chat with any phone number + pre-filled message.
+/// Tries the native WhatsApp app first (needs <queries> entries for
+/// com.whatsapp / com.whatsapp.w4b on Android 11+), then falls back to
+/// the wa.me browser link.
 Future<bool> openWhatsAppNumber(String phone, String message) async {
-  final uri = Uri.parse(
-      'https://wa.me/${toWhatsAppNumber(phone)}?text=${Uri.encodeComponent(message)}');
-  if (await canLaunchUrl(uri)) {
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-    return true;
+  final number = toWhatsAppNumber(phone);
+  if (number.isEmpty) return false;
+  final text = Uri.encodeComponent(message);
+  final appUri = Uri.parse('whatsapp://send?phone=$number&text=$text');
+  try {
+    if (await canLaunchUrl(appUri)) {
+      return await launchUrl(appUri,
+          mode: LaunchMode.externalApplication);
+    }
+  } catch (_) {}
+  final webUri = Uri.parse('https://wa.me/$number?text=$text');
+  try {
+    return await launchUrl(webUri,
+        mode: LaunchMode.externalApplication);
+  } catch (_) {
+    return false;
   }
-  return false;
 }
 
 /// Direct dial any phone number.

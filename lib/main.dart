@@ -8,6 +8,7 @@ import 'screens/dashboard_screen.dart';
 import 'screens/import_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/outstanding_screen.dart';
+import 'services/call_reminders.dart';
 import 'services/customer_store.dart';
 import 'services/firebase_service.dart';
 
@@ -29,7 +30,10 @@ void main() async {
   }
   final store = CustomerStore();
   await store.init();
+  await CallReminderService.init();
+  CallReminderService.lookupCustomer = store.findByAccountNo;
   runApp(KistBookApp(store: store));
+  await CallReminderService.handleLaunchFromNotification();
 }
 
 class KistBookApp extends StatelessWidget {
@@ -42,6 +46,7 @@ class KistBookApp extends StatelessWidget {
       value: store,
       child: MaterialApp(
         title: 'QistBook',
+        navigatorKey: appNavigatorKey,
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
           useMaterial3: true,

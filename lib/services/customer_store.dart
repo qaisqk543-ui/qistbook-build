@@ -105,6 +105,11 @@ class CustomerStore extends ChangeNotifier {
     if (_customers.isEmpty && !FirebaseService.enabled) {
       await _seedSampleData();
     }
+    // Demo mode: one-time guarantor/collection enrichment for the samples —
+    // also covers older installs that seeded before this existed.
+    if (!FirebaseService.enabled) {
+      await _enrichSampleDetails();
+    }
     final prefs = await SharedPreferences.getInstance();
     wifiOnlySync = prefs.getBool('wifi_only_sync') ?? false;
     _sort();
@@ -189,7 +194,90 @@ class CustomerStore extends ChangeNotifier {
     for (final r in samples) {
       await applyOutstandingRow(r);
     }
+    await _enrichSampleDetails();
     lastUpdatedAt = DateTime.now();
+  }
+
+  /// Demo-only: attach guarantors + installment-collection history to the
+  /// sample customers so the detail screen shows real-looking data.
+  /// - Runs only in demo mode (callers check !FirebaseService.enabled).
+  /// - Only touches lightweight outstanding-only records (needsDetail) whose
+  ///   guarantors/collections are still empty → real imported data is never
+  ///   overwritten.
+  /// - Runs once per install (SharedPreferences flag) so older demo
+  ///   installs get it too.
+  Future<void> _enrichSampleDetails() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('sample_enriched_v1') ?? false) return;
+
+    final naeem = findByAccountNo('003077');
+    if (naeem != null &&
+        naeem.needsDetail &&
+        naeem.guarantors.isEmpty &&
+        naeem.collections.isEmpty) {
+      naeem.guarantors.addAll([
+        Guarantor(
+            name: 'Rashid Mehmood',
+            cnic: '35202-1234567-8',
+            address: 'House 12, Street 4, Model Town, Lahore',
+            phone: '03001234567'),
+        Guarantor(
+            name: 'Aslam Khan',
+            cnic: '35202-7654321-9',
+            address: 'Shop 8, Main Bazaar, Lahore',
+            phone: '03219876543'),
+      ]);
+      naeem.collections.addAll([
+        CollectionEntry(
+            receiptNo: 'R-1001',
+            date: '19-Jul-26',
+            prevBalance: 285000,
+            collected: 100000,
+            balance: 185000,
+            receivedBy: 'Sajjad Ahmed'),
+        CollectionEntry(
+            receiptNo: 'R-1042',
+            date: '19-Aug-26',
+            prevBalance: 185000,
+            collected: 0,
+            balance: 185000,
+            receivedBy: 'Sajjad Ahmed'),
+      ]);
+      await saveCustomer(naeem);
+    }
+
+    final shahid = findByAccountNo('002910');
+    if (shahid != null &&
+        shahid.needsDetail &&
+        shahid.guarantors.isEmpty &&
+        shahid.collections.isEmpty) {
+      shahid.guarantors.add(
+        Guarantor(
+            name: 'Bilal Hussain',
+            cnic: '35202-1122334-5',
+            address: 'House 45, Block C, DHA Phase 2, Lahore',
+            phone: '03334445566'),
+      );
+      shahid.collections.addAll([
+        CollectionEntry(
+            receiptNo: 'R-2088',
+            date: '16-Mar-26',
+            prevBalance: 174000,
+            collected: 50000,
+            balance: 124000,
+            receivedBy: 'Sajjad Ahmed'),
+        CollectionEntry(
+            receiptNo: 'R-2150',
+            date: '29-Sep-26',
+            prevBalance: 95000,
+            collected: 8000,
+            balance: 87000,
+            receivedBy: 'Sajjad Ahmed'),
+      ]);
+      await saveCustomer(shahid);
+    }
+
+    await prefs.setBool('sample_enriched_v1', true);
   }
 
   /// Bind the store to a Firebase user: pull their private cloud data and

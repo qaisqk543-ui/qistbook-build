@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/customer.dart';
+import '../services/call_reminders.dart';
 import '../services/customer_store.dart';
 import '../services/reminders.dart';
 import 'customer_detail_screen.dart';
@@ -57,7 +58,10 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
             .where((c) =>
                 (c.officer.isEmpty ? '—' : c.officer) == _officer)
             .toList();
-    final totalDue = list.fold(0.0, (s, c) => s + c.currentDue);
+    final totalOutstanding =
+        list.fold(0.0, (s, c) => s + c.balance);
+    final totalPayable =
+        list.fold(0.0, (s, c) => s + c.currentDue);
 
     return Scaffold(
       appBar: AppBar(
@@ -85,8 +89,11 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
                   mainAxisAlignment:
                       MainAxisAlignment.spaceAround,
                   children: [
+                    _head('Total Outstanding',
+                        _rs(totalOutstanding)),
+                    _head('Is Mah (Payable)',
+                        _rs(totalPayable)),
                     _head('Pending', '${list.length}'),
-                    _head('Total due', _rs(totalDue)),
                   ],
                 ),
                 if (store.lastUpdatedAt != null)
@@ -162,11 +169,34 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          FutureBuilder<bool>(
+            future: CallReminderService.hasReminder(c.accountNo),
+            builder: (context, snap) {
+              final has = snap.data == true;
+              return IconButton(
+                icon: Icon(Icons.alarm_add,
+                    color: has ? Colors.orange : Colors.grey),
+                tooltip: has
+                    ? 'Reminder laga hai — badlo/khatam karo'
+                    : 'Call reminder lagao',
+                onPressed: () => _reminderTap(context, c),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.chat, color: Colors.green),
             tooltip: 'WhatsApp reminder',
-            onPressed: () =>
-                openWhatsApp(c, dueReminderMessage(c)),
+            onPressed: () async {
+              final ok =
+                  await openWhatsApp(c, dueReminderMessage(c));
+              if (!ok && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content:
+                          Text('WhatsApp nahi khul saka')),
+                );
+              }
+            },
           ),
           IconButton(
             icon: const Icon(Icons.call, color: Colors.blue),
@@ -182,5 +212,95 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
             builder: (_) => CustomerDetailScreen(customer: c)),
       ),
     );
+  }
+
+  String _fmtTimeOfDay(TimeOfDay t) {
+    var h = t.hour % 12;
+    if (h == 0) h = 12;
+    final m = t.minute.toString().padLeft(2, '0');
+    final ap = t.hour < 12 ? 'AM' : 'PM';
+    return '$h:$m $ap';
+  }
+
+  String _fmtReminderTime(DateTime t) {
+    final d = t.day.toString().padLeft(2, '0');
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    var h = t.hour % 12;
+    if (h == 0) h = 12;
+    final m = t.minute.toString().padLeft(2, '0');
+    final ap = t.hour < 12 ? 'AM' : 'PM';
+    return '$d-${months[t.month - 1]} $h:$m $ap';
+  }
+
+  /// Alarm icon tap: set / change / cancel a call reminder for [c].
+  Future<void> _reminderTap(BuildContext context, Customer c) async {
+    final existing =
+        await CallReminderService.getReminderTime(c.accountNo);
+    if (existing != null && context.mounted) {
+      final action = await showDialog<String>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: Text(c.name.isEmpty ? '(no name)' : c.name),
+          content: Text(
+              'Reminder laga hai: ${_fmtReminderTime(existing)}.\nBadalna ya khatam karna hai?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, 'cancel'),
+                child: const Text('Khatam karo')),
+            TextButton(
+                onPressed: () => Navigator.pop(context, 'change'),
+                child: const Text('Time badlo')),
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Rehne do')),
+          ],
+        ),
+      );
+      if (action == 'cancel') {
+        await CallReminderService.cancelReminder(c.accountNo);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('Reminder khatam kar diya')));
+          setState(() {});
+        }
+        return;
+      }
+      if (action != 'change') return;
+    }
+    if (!context.mounted) return;
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (picked == null || !context.mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(c.name.isEmpty ? '(no name)' : c.name),
+        content: Text(
+            '${_fmtTimeOfDay(picked)} par call reminder lagana hai?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Nahi')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Haan, lagao')),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    final when =
+        await CallReminderService.scheduleReminder(c, picked);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text('Reminder lag gaya: ${_fmtReminderTime(when)}')));
+      setState(() {});
+    }
   }
 }
