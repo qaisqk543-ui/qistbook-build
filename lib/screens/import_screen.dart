@@ -83,12 +83,10 @@ class _ImportScreenState extends State<ImportScreen> {
       final page = await doc.getPage(i);
       final img = await page.render(
           width: page.width * 2,
-          height: page.height * 2);
-      final uiImage = await img!.createImage();
-      final bytes =
-          await uiImage.toByteData(format: ui.ImageByteFormat.png);
+          height: page.height * 2,
+          format: PdfPageImageFormat.png);
       final file = File('${tmp.path}/kistbook_p$i.png');
-      await file.writeAsBytes(bytes!.buffer.asUint8List());
+      await file.writeAsBytes(img!.bytes);
       out.add(file.path);
       await page.close();
     }
