@@ -43,13 +43,19 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final nums = await SubscriptionService.paymentNumbers();
     final pending = await SubscriptionService.pendingTid(widget.uid);
     final exp = await SubscriptionService.expiryOf(widget.uid);
+    final wasTrial =
+        await SubscriptionService.trialWasUsed(widget.uid);
+    final status =
+        await SubscriptionService.statusOf(widget.uid);
     if (mounted) {
       setState(() {
         _fee = fee;
         _numbers = nums;
         _pending = pending;
         _expiredNote = (exp != null && exp.isBefore(DateTime.now()))
-            ? 'Apki subscription ${fmtDay(exp)} ko khatam ho gayi thi.'
+            ? (wasTrial && status == 'trial'
+                ? 'Aap ka 7 din ka free trial khatam ho gaya — subscription lein taake kaam jari rahe.'
+                : 'Apki subscription ${fmtDay(exp)} ko khatam ho gayi thi.')
             : null;
       });
     }

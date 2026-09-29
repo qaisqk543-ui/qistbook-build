@@ -205,6 +205,32 @@ class CallReminderService {
     } catch (_) {}
   }
 
+  /// Free trial khatam hone se 1 din pehle ki notification (id 9003).
+  static Future<void> scheduleTrialReminder(
+      DateTime when) async {
+    try {
+      await init();
+      const androidDetails = AndroidNotificationDetails(
+        'qistbook_updates',
+        'QistBook Updates',
+        channelDescription: 'Monthly updates aur ahem ittila',
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+      const details =
+          NotificationDetails(android: androidDetails);
+      await _plugin.zonedSchedule(
+        9003,
+        'Free trial kal khatam ho raha hai',
+        'QistBook ka 7 din ka free trial kal khatam — subscription lein taake kaam ruke nahi.',
+        tz.TZDateTime.from(when, tz.local),
+        details,
+        androidScheduleMode:
+            AndroidScheduleMode.exactAllowWhileIdle,
+      );
+    } catch (_) {}
+  }
+
   static Future<void> cancelReminder(String accountNo) async {    try {
       await _plugin.cancel(_notifId(accountNo));
     } catch (_) {}

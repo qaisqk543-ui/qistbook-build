@@ -135,6 +135,7 @@ class HomeScreen extends StatelessWidget {
         padding: const EdgeInsets.all(AppSpace.m),
         children: [
           const ReadOnlyBanner(),
+          const TrialBanner(),
           const SizedBox(height: AppSpace.s),
           Text(
             'Assalam-o-Alaikum${name.isEmpty ? '' : ', $name'}',

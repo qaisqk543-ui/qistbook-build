@@ -28,6 +28,9 @@ class SubscriptionService {
 
   static const defaultFee = 500;
 
+  /// Naye user ko itne din ka free trial (full access).
+  static const trialDays = 7;
+
   // ---------------------------------------------------------- keys
   static String _k(String uid, String name) => '${name}_$uid';
   static const _ownerKey = 'is_owner';
@@ -36,6 +39,9 @@ class SubscriptionService {
   static const _jazzKey = 'pay_jazzcash';
   static const _easyKey = 'pay_easypaisa';
   static const _bankKey = 'pay_bank';
+  // Device-level: ek device par sirf ek dafa trial (dobara signup se naya
+  // trial nahi). Best-effort hai — backend ke baghair is se zyada nahi.
+  static const _trialDeviceKey = 'trial_used_device';
 
   // ---------------------------------------------------------- activation code
   /// 6-digit numeric code = SHA256(appSecret + "QB" + YYYYMM) ke
@@ -82,11 +88,60 @@ class SubscriptionService {
     return prefs.getString(_k(uid, 'sub_status')) ?? '';
   }
 
-  /// Active = owner bypass ya expiry abhi baqi.
+  /// Active = owner bypass ya expiry abhi baqi (trial bhi active hai).
   static Future<bool> isActive(String uid) async {
     if (await isOwner()) return true;
     final exp = await expiryOf(uid);
     return exp != null && exp.isAfter(DateTime.now());
+  }
+
+  // ---------------------------------------------------------- free trial
+  /// Naye signup par 7 din ka free trial (full access). Sirf ek dafa —
+  /// device aur user dono level par check. Returns true agar trial laga.
+  static Future<bool> startTrial(String uid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_trialDeviceKey) == true) return false;
+      if (prefs.getBool(_k(uid, 'trial_used')) == true) return false;
+      final exp =
+          DateTime.now().add(const Duration(days: trialDays));
+      await prefs.setInt(
+          _k(uid, 'sub_expiry'), exp.millisecondsSinceEpoch);
+      await prefs.setString(_k(uid, 'sub_status'), 'trial');
+      await prefs.setBool(_trialDeviceKey, true);
+      await prefs.setBool(_k(uid, 'trial_used'), true);
+      // Trial khatam hone se 1 din pehle yaad dilao.
+      final when = exp.subtract(const Duration(days: 1));
+      if (when.isAfter(DateTime.now())) {
+        await CallReminderService.scheduleTrialReminder(when);
+      }
+      return true;
+    } catch (e) {
+      ErrorLog.log('Trial', e);
+      return false;
+    }
+  }
+
+  /// Abhi trial chal raha hai?
+  static Future<bool> isTrial(String uid) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getString(_k(uid, 'sub_status')) != 'trial') {
+      return false;
+    }
+    final exp = await expiryOf(uid);
+    return exp != null && exp.isAfter(DateTime.now());
+  }
+
+  /// Trial ke baqi din (trial na ho to 0).
+  static Future<int> trialDaysLeft(String uid) async {
+    if (!await isTrial(uid)) return 0;
+    return daysLeft(uid);
+  }
+
+  /// Trial kabhi mila tha (khatam ho chuka ho to bhi true)?
+  static Future<bool> trialWasUsed(String uid) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_k(uid, 'trial_used')) == true;
   }
 
   static Future<int> daysLeft(String uid) async {
@@ -125,9 +180,11 @@ class SubscriptionService {
   }
 
   /// App start par: active ho aur 3 din ke andar expiry ho to reminder pakka karo.
+  /// Trial ka apna 1-din-pehle wala reminder hai — is liye trial par skip.
   static Future<void> ensureExpiryReminder(String uid) async {
     try {
       if (await isOwner()) return;
+      if (await isTrial(uid)) return;
       final exp = await expiryOf(uid);
       if (exp == null || !exp.isAfter(DateTime.now())) return;
       await _scheduleExpiryReminder(exp);

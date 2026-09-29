@@ -19,6 +19,11 @@ class AccessControl extends ChangeNotifier {
 
   bool get canEdit => !readOnly;
 
+  /// Free trial ke baqi din (0 = trial nahi chal raha).
+  int trialDays = 0;
+
+  bool get inTrial => trialDays > 0 && !readOnly;
+
   Future<void> init(String uid) async {
     _uid = uid;
     await refresh();
@@ -30,8 +35,11 @@ class AccessControl extends ChangeNotifier {
     if (uid == null) return;
     final active = await SubscriptionService.isActive(uid);
     final next = !active;
-    if (next != readOnly) {
+    final tdays =
+        await SubscriptionService.trialDaysLeft(uid);
+    if (next != readOnly || tdays != trialDays) {
       readOnly = next;
+      trialDays = tdays;
       notifyListeners();
     }
   }
@@ -79,6 +87,61 @@ Future<bool> requireEdit(BuildContext context) async {
     return accessRef.canEdit;
   }
   return false;
+}
+
+/// Paywall/subscription screen kholo (trial banner ya renew se).
+Future<void> openPaywall(BuildContext context) async {
+  final access = context.read<AccessControl>();
+  final uid = access.uid;
+  if (uid == null) return;
+  await Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => PaywallScreen(
+        uid: uid,
+        onActivated: () async {
+          await access.refresh();
+        },
+      ),
+    ),
+  );
+}
+
+/// Green banner: free trial chal raha ho to Home par din gin kar dikhao.
+class TrialBanner extends StatelessWidget {
+  const TrialBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final access = context.watch<AccessControl>();
+    if (!access.inTrial) return const SizedBox.shrink();
+    final days = access.trialDays;
+    return Container(
+      width: double.infinity,
+      padding:
+          const EdgeInsets.symmetric(horizontal: AppSpace.m, vertical: 10),
+      color: AppColors.tintGreen,
+      child: Row(
+        children: [
+          const Icon(Icons.card_giftcard_rounded,
+              size: 26, color: AppColors.okGreen),
+          const SizedBox(width: AppSpace.s),
+          Expanded(
+            child: Text(
+              '🎁 Free trial: $days din baqi hain — poori app muft istemal karein.',
+              style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.ink),
+            ),
+          ),
+          TextButton(
+            onPressed: () => openPaywall(context),
+            child: const Text('Abhi lein'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Slim banner: Home/Outstanding/Voucher/Received appbars ke neeche.

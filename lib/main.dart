@@ -82,51 +82,23 @@ void _showCrashScreen(Object error, StackTrace? stack) {
   );
 }
 
-class KistBookApp extends StatelessWidget {
+/// App root (stateful: session check → store open → providers).
+///
+/// IMPORTANT: CustomerStore + AccessControl providers MaterialApp (aur uske
+/// Navigator) se UPAR lagaye gaye hain — taake Navigator.push se khulne wali
+/// har screen (CustomerDetail, VoucherDetail waghera) ko store mil sake.
+/// Pehle providers Navigator ke neeche the → pushed routes par
+/// "Provider<CustomerStore> not found" crash hota tha (v1.0.9 bug).
+class KistBookApp extends StatefulWidget {
   final AppSettings settings;
   final AuthService auth;
   const KistBookApp({super.key, required this.settings, required this.auth});
 
   @override
-  Widget build(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: settings,
-      child: AuthScope(
-        auth: auth,
-        child: Builder(
-          builder: (context) {
-            final s = context.watch<AppSettings>();
-            return MaterialApp(
-              title: 'QistBook',
-              navigatorKey: appNavigatorKey,
-              theme: appTheme(),
-              // Elderly-friendly text scaling (Normal / Bara).
-              builder: (context, child) {
-                final mq = MediaQuery.of(context);
-                return MediaQuery(
-                  data: mq.copyWith(textScaler: TextScaler.linear(s.textScale)),
-                  child: child!,
-                );
-              },
-              home: StartupGate(auth: auth),
-            );
-          },
-        ),
-      ),
-    );
-  }
+  State<KistBookApp> createState() => _KistBookAppState();
 }
 
-/// Boot: session check → store open → app. No session → login/signup.
-class StartupGate extends StatefulWidget {
-  final AuthService auth;
-  const StartupGate({super.key, required this.auth});
-
-  @override
-  State<StartupGate> createState() => _StartupGateState();
-}
-
-class _StartupGateState extends State<StartupGate> {
+class _KistBookAppState extends State<KistBookApp> {
   bool _loading = true;
   bool _legacyFound = false;
   CustomerStore? _store;
@@ -204,6 +176,9 @@ class _StartupGateState extends State<StartupGate> {
   }
 
   void _onLogout() {
+    // Providers hatane se pehle pushed routes saaf karo (wo store ko
+    // watch karti hain) — warna rebuild par ProviderNotFound.
+    appNavigatorKey.currentState?.popUntil((r) => r.isFirst);
     setState(() {
       _store = null;
       _access = null;
@@ -221,74 +196,120 @@ class _StartupGateState extends State<StartupGate> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    if (_openError != null) {
-      return Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline_rounded,
-                    size: 72, color: AppColors.dueRed),
-                const SizedBox(height: 16),
-                const Text('Kuch garbar hui',
-                    style: AppText.h1, textAlign: TextAlign.center),
-                const SizedBox(height: 8),
-                Text(_openError!,
-                    style: AppText.body, textAlign: TextAlign.center),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Dobara try karein'),
-                  onPressed: () {
-                    final user = widget.auth.currentUser;
-                    setState(() {
-                      _loading = true;
-                      _openError = null;
-                    });
-                    if (user != null) {
-                      _openStore(user);
-                    } else {
-                      _boot();
-                    }
-                  },
-                ),
-              ],
-            ),
+    return ChangeNotifierProvider.value(
+      value: widget.settings,
+      child: AuthScope(
+        auth: widget.auth,
+        child: Builder(
+          builder: (context) {
+            final s = context.watch<AppSettings>();
+
+            // Kaunsi home screen dikhani hai.
+            final Widget home;
+            if (_loading) {
+              home = const Scaffold(
+                  body: Center(child: CircularProgressIndicator()));
+            } else if (_openError != null) {
+              home = _errorHome();
+            } else if (_pendingPinUser != null) {
+              // App Lock gate: sahi PIN par hi andar.
+              final pinUser = _pendingPinUser!;
+              home = AppLockScreen(
+                uid: pinUser.id,
+                mode: PinMode.verify,
+                onDone: (ok) {
+                  if (ok && mounted) {
+                    setState(() => _pendingPinUser = null);
+                  }
+                },
+                onForgot: _onPinForgot,
+              );
+            } else {
+              final store = _store;
+              final access = _access;
+              home = (store != null && access != null)
+                  ? HomeShell(store: store, onLogout: _onLogout)
+                  : AuthScreen(
+                      onDone: _onAuthDone, legacyDataFound: _legacyFound);
+            }
+
+            Widget app = MaterialApp(
+              title: 'QistBook',
+              navigatorKey: appNavigatorKey,
+              theme: appTheme(),
+              // Elderly-friendly text scaling (Normal / Bara).
+              builder: (context, child) {
+                final mq = MediaQuery.of(context);
+                return MediaQuery(
+                  data:
+                      mq.copyWith(textScaler: TextScaler.linear(s.textScale)),
+                  child: child!,
+                );
+              },
+              home: home,
+            );
+
+            // Store ready + PIN gate clear → providers Navigator se UPAR,
+            // taake har pushed route ko CustomerStore/AccessControl mile.
+            final store = _store;
+            final access = _access;
+            if (store != null &&
+                access != null &&
+                _pendingPinUser == null) {
+              app = MultiProvider(
+                providers: [
+                  ChangeNotifierProvider.value(value: store),
+                  ChangeNotifierProvider.value(value: access),
+                ],
+                child: app,
+              );
+            }
+            return app;
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Startup error screen (dobara try ka button).
+  Widget _errorHome() {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline_rounded,
+                  size: 72, color: AppColors.dueRed),
+              const SizedBox(height: 16),
+              const Text('Kuch garbar hui',
+                  style: AppText.h1, textAlign: TextAlign.center),
+              const SizedBox(height: 8),
+              Text(_openError!,
+                  style: AppText.body, textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Dobara try karein'),
+                onPressed: () {
+                  final user = widget.auth.currentUser;
+                  setState(() {
+                    _loading = true;
+                    _openError = null;
+                  });
+                  if (user != null) {
+                    _openStore(user);
+                  } else {
+                    _boot();
+                  }
+                },
+              ),
+            ],
           ),
         ),
-      );
-    }
-    final pinUser = _pendingPinUser;
-    if (pinUser != null) {
-      // App Lock gate: sahi PIN par hi andar.
-      return AppLockScreen(
-        uid: pinUser.id,
-        mode: PinMode.verify,
-        onDone: (ok) {
-          if (ok && mounted) {
-            setState(() => _pendingPinUser = null);
-          }
-        },
-        onForgot: _onPinForgot,
-      );
-    }
-    final store = _store;
-    final access = _access;
-    if (store != null && access != null) {
-      return MultiProvider(
-        providers: [
-          ChangeNotifierProvider.value(value: store),
-          ChangeNotifierProvider.value(value: access),
-        ],
-        child: HomeShell(store: store, onLogout: _onLogout),
-      );
-    }
-    return AuthScreen(onDone: _onAuthDone, legacyDataFound: _legacyFound);
+      ),
+    );
   }
 }
 

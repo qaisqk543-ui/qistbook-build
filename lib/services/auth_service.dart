@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../models/user.dart';
+import 'subscription_service.dart';
 
 class AuthResult {
   final AppUser? user;
@@ -209,6 +210,8 @@ class AuthService {
     await _save(user);
     _hasAnyUserCached = true;
     await _setSession(user);
+    // Naye user ko 7 din ka free trial (full access).
+    await SubscriptionService.startTrial(id);
     return AuthResult.ok(user);
   }
 
