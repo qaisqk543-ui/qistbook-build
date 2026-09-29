@@ -38,20 +38,20 @@ class SubscriptionService {
   static const _bankKey = 'pay_bank';
 
   // ---------------------------------------------------------- activation code
-  /// 6-digit numeric code = SHA256(appSecret + "QB" + YYYYMM) se.
+  /// 6-digit numeric code = SHA256(appSecret + "QB" + YYYYMM) ke
+  /// hex digest ke pehle 6 NUMERIC digits. Owner (Qais) isay
+  /// WhatsApp/call par customer ko de.
   static String monthlyCode([DateTime? when]) {
     final d = when ?? DateTime.now();
     final yyyymm =
         '${d.year}${d.month.toString().padLeft(2, '0')}';
-    final digest = sha256
-        .convert(utf8.encode('$appSecret|QB|$yyyymm'))
-        .bytes;
-    final sb = StringBuffer();
-    for (final b in digest) {
-      if (sb.length >= 6) break;
-      sb.write(b % 10);
-    }
-    return sb.toString().padRight(6, '0');
+    final hex = sha256
+        .convert(utf8.encode('$appSecret${'QB'}$yyyymm'))
+        .toString();
+    final digits = hex.replaceAll(RegExp(r'[^0-9]'), '');
+    final six =
+        digits.length >= 6 ? digits.substring(0, 6) : digits;
+    return six.padRight(6, '0');
   }
 
   /// Current ya pichhle mahine ka code qabool (month-boundary safety).
