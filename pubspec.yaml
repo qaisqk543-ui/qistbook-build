@@ -15,7 +15,7 @@ dependencies:
   google_mlkit_text_recognition: ^0.13.1
   # Pick images (camera/gallery) and PDF files
   image_picker: ^1.0.7
-  file_picker: ^6.1.1
+  file_picker: ^8.0.0
   # Render PDF pages to images so OCR can read them
   pdf_render: ^1.4.12
   # Firebase: login (phone OTP / email) + private per-user cloud sync
