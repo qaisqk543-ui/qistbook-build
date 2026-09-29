@@ -26,23 +26,14 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Patch old plugins (add namespace)
+      - name: Patch pdf_render namespace
         run: |
-          # Fix pdf_render and other old plugins missing namespace for AGP 8.x
-          find ~/.pub-cache/hosted/pub.dev -name "build.gradle" -path "*pdf_render*" | while read f; do
-            if ! grep -q "namespace" "$f"; then
+          PUB_CACHE=~/.pub-cache/hosted/pub.dev
+          for d in "$PUB_CACHE"/pdf_render-*; do
+            f="$d/android/build.gradle"
+            if [ -f "$f" ] && ! grep -q "namespace" "$f"; then
               echo "Patching $f"
-              # Add namespace to android block
-              python3 -c "
-import re
-with open('$f', 'r') as fp:
-    c = fp.read()
-if 'namespace' not in c:
-    c = c.replace('android {', 'android {\n    namespace \"com.example.pdf_render\"', 1)
-    with open('$f', 'w') as fp:
-        fp.write(c)
-    print('Patched')
-"
+              sed -i 's/android {/android {\n    namespace "com.example.pdf_render"/' "$f"
             fi
           done
 
