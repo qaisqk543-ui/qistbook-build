@@ -35,6 +35,15 @@ class CallReminderService {
 
   static Future<void> init() async {
     if (_ready) return;
+    // Notifications must NEVER crash app launch — any failure here is
+    // swallowed so the app always opens.
+    try {
+      await _initUnsafe();
+    } catch (_) {}
+    _ready = true;
+  }
+
+  static Future<void> _initUnsafe() async {
     tzdata.initializeTimeZones();
     // Device wall-clock zone for scheduling (Pakistan).
     tz.setLocalLocation(tz.getLocation('Asia/Karachi'));
@@ -51,7 +60,6 @@ class CallReminderService {
         AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
     await android?.requestExactAlarmsPermission();
-    _ready = true;
   }
 
   /// Call after init + runApp when the app may have been launched by tapping

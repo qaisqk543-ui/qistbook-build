@@ -31,7 +31,11 @@ void main() async {
   }
   final store = CustomerStore();
   await store.init();
-  await CallReminderService.init();
+  try {
+    await CallReminderService.init();
+  } catch (_) {
+    // Reminder system must never block app launch.
+  }
   CallReminderService.lookupCustomer = store.findByAccountNo;
   runApp(KistBookApp(store: store));
   await CallReminderService.handleLaunchFromNotification();
