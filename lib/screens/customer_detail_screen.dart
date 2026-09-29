@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/customer.dart';
+import '../services/access_control.dart';
 import '../services/customer_store.dart';
 import '../services/reminders.dart';
 
@@ -39,13 +40,15 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   }
 
   /// Voucher customer ko wapas Outstanding me bhejo (ghalti se dala ho to).
+  /// Saari voucher entries khatam hoti hain → Voucher tab se nikal jata hai.
   Future<void> _moveBackFromVoucher(BuildContext context) async {
+    if (!await requireEdit(context)) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Wapas Outstanding me?'),
         content: Text(
-            '${c.name} Voucher se nikal kar wapas Outstanding me aa jayega.'),
+            '${c.name} ki saari voucher entries khatam ho jayengi, aur wo Outstanding me wapas aa jayega.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -57,7 +60,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       ),
     );
     if (confirm != true || !context.mounted) return;
-    await context.read<CustomerStore>().setVoucher([c], false);
+    await context.read<CustomerStore>().clearVouchersFor(c.accountNo);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Wapas Outstanding me bhej diya')));
@@ -68,6 +71,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   // ------------------------------------------------------------ edit dialogs
 
   Future<void> _editPhones() async {
+    if (!await requireEdit(context)) return;
     final cellCtl = TextEditingController(text: c.cell);
     final telCtl = TextEditingController(text: c.telRes);
     final ok = await showDialog<bool>(
@@ -114,6 +118,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   }
 
   Future<void> _contactDialog({int? index}) async {
+    if (!await requireEdit(context)) return;
     final existing = index != null ? c.extraContacts[index] : null;
     final labelCtl =
         TextEditingController(text: existing?.label ?? '');
@@ -168,11 +173,13 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   }
 
   Future<void> _deleteContact(int index) async {
+    if (!await requireEdit(context)) return;
     c.extraContacts.removeAt(index);
     await _persist();
   }
 
   Future<void> _editNotes() async {
+    if (!await requireEdit(context)) return;
     final notesCtl = TextEditingController(text: c.notes);
     final ok = await showDialog<bool>(
       context: context,
@@ -210,9 +217,11 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       appBar: AppBar(
         title: Text(c.name.isEmpty ? 'Customer' : c.name),
         actions: [
-          if (c.inVoucher)
+          if (context
+              .watch<CustomerStore>()
+              .hasVoucherEntries(c.accountNo))
             IconButton(
-              icon: const Icon(Icons.undo),
+              icon: const Icon(Icons.undo_rounded),
               tooltip: 'Voucher se wapas Outstanding me',
               onPressed: () => _moveBackFromVoucher(context),
             ),
@@ -369,7 +378,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       [
         if (c.extraContacts.isEmpty)
           const Text('Koi extra contact nahi — neeche button se add karen.',
-              style: TextStyle(color: Colors.grey, fontSize: 13)),
+              style: TextStyle(color: Colors.grey, fontSize: 14)),
         ...c.extraContacts.asMap().entries.map((entry) {
           final i = entry.key;
           final ec = entry.value;
@@ -443,7 +452,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       [
         if (c.notes.isEmpty)
           const Text('Koi note nahi.',
-              style: TextStyle(color: Colors.grey, fontSize: 13))
+              style: TextStyle(color: Colors.grey, fontSize: 14))
         else
           Text(c.notes),
       ],

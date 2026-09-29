@@ -1,7 +1,7 @@
 name: kistbook
 description: Kist Book - installment (qist) management app for shops.
 publish_to: 'none'
-version: 1.0.7+8
+version: 1.0.9+10
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -37,6 +37,12 @@ dependencies:
   # Scheduled call reminders (local notifications at a chosen time)
   flutter_local_notifications: ^19.4.0
   timezone: ^0.10.1
+  # Password hashing for local login
+  crypto: ^3.0.3
+  # Share files (CSV export, backup) via WhatsApp / email / Drive
+  share_plus: ^10.1.2
+  # Phone model for support reports
+  device_info_plus: ^11.3.0
 
 dev_dependencies:
   flutter_test:

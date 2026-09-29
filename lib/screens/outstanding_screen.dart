@@ -1,12 +1,10 @@
 /// Outstanding screen: ONLY the customers whose installments are pending.
 /// - Upload a fresh outstanding report → paid-up names disappear until the
 ///   next month's list brings them back (if they still owe).
-/// - Collect opens amount + method + date dialog; partial payments reduce
-///   the due — the customer stays listed while currentDue > 0.
-/// - Long-press rows to multi-select and move customers into the Voucher
-///   category.
-/// Reused for the Voucher tab via [voucherMode] (same pattern, voucher
-/// customers only, no multi-select).
+/// - Collect opens the shared amount + method + date dialog; partial payments
+///   reduce the due — the customer stays listed while currentDue > 0.
+/// - Long-press rows to multi-select and add voucher ENTRIES (amount + date).
+/// - Refresh button: manual data refresh + monthly rollover check.
 library;
 
 import 'package:flutter/material.dart';
@@ -15,14 +13,18 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/customer.dart';
 import '../services/call_reminders.dart';
+import '../services/access_control.dart';
 import '../services/customer_store.dart';
+import '../services/csv_export.dart';
+import '../services/error_log.dart';
 import '../services/reminders.dart';
+import '../theme/app_theme.dart';
+import 'collect_dialog.dart';
 import 'customer_detail_screen.dart';
 import 'import_screen.dart';
 
 class OutstandingScreen extends StatefulWidget {
-  final bool voucherMode;
-  const OutstandingScreen({super.key, this.voucherMode = false});
+  const OutstandingScreen({super.key});
 
   @override
   State<OutstandingScreen> createState() => _OutstandingScreenState();
@@ -30,63 +32,80 @@ class OutstandingScreen extends StatefulWidget {
 
 class _OutstandingScreenState extends State<OutstandingScreen> {
   String _officer = 'All';
+  String _query = '';
   final Set<String> _selected = {};
 
   bool get _selecting => _selected.isNotEmpty;
 
-  String _rs(double v) =>
-      'Rs ${v.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}';
-
-  String _fmtTime(DateTime t) {
-    final d = t.day.toString().padLeft(2, '0');
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    var h = t.hour % 12;
-    if (h == 0) h = 12;
-    final m = t.minute.toString().padLeft(2, '0');
-    final ap = t.hour < 12 ? 'AM' : 'PM';
-    return '$d-${months[t.month - 1]} $h:$m $ap';
+  Future<void> _refresh(CustomerStore store) async {
+    await store.refreshData();
+    final n = await store.maybeRollover();
+    if (mounted) {
+      showAppSnack(context,
+          n > 0 ? 'Data refresh ho gaya ($n due update)' : 'Data refresh ho gaya');
+    }
   }
 
-  String _fmtDate(DateTime d) =>
-      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  /// CSV export: filtered list share karo (WhatsApp / email…).
+  Future<void> _export(List<Customer> list) async {
+    if (list.isEmpty) {
+      showAppSnack(context, 'Export ke liye koi data nahi');
+      return;
+    }
+    final ok = await shareCsv(
+      'outstanding-${DateTime.now().millisecondsSinceEpoch}.csv',
+      outstandingCsv(list),
+      text: 'QistBook Outstanding — ${list.length} customers',
+    );
+    if (!ok && mounted) {
+      await showFriendlyError(context, 'CSV share nahi ho saka.',
+          screen: 'Outstanding export');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<CustomerStore>();
-    final base =
-        widget.voucherMode ? store.voucherList : store.outstanding;
+    final base = store.outstanding;
     final officers = <String>[
       'All',
       ...{for (final c in base) c.officer.isEmpty ? '—' : c.officer},
     ];
-    final list = _officer == 'All'
-        ? base
-        : base
-            .where((c) =>
-                (c.officer.isEmpty ? '—' : c.officer) == _officer)
-            .toList();
+    final q = _query.trim().toLowerCase();
+    final qDigits = q.replaceAll(RegExp(r'\D'), '');
+    final list = (_officer == 'All'
+            ? base
+            : base
+                .where((c) =>
+                    (c.officer.isEmpty ? '—' : c.officer) == _officer)
+                .toList())
+        .where((c) {
+      if (q.isEmpty) return true;
+      if (c.name.toLowerCase().contains(q)) return true;
+      if (c.accountNo.toLowerCase().contains(q)) return true;
+      if (qDigits.isNotEmpty &&
+          c.cell.replaceAll(RegExp(r'\D'), '').contains(qDigits)) {
+        return true;
+      }
+      return false;
+    }).toList();
     final totalOutstanding =
         list.fold(0.0, (s, c) => s + c.balance);
     final totalPayable =
         list.fold(0.0, (s, c) => s + c.currentDue);
-    final title = widget.voucherMode ? 'Voucher' : 'Outstanding';
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-            _selecting ? '${_selected.length} selected' : title),
+        title: Text(_selecting ? '${_selected.length} selected' : 'Outstanding'),
         actions: _selecting
             ? [
                 IconButton(
-                  icon: const Icon(Icons.check),
+                  icon: const Icon(Icons.check_rounded),
                   tooltip: 'Voucher me dalo',
                   onPressed: () => _moveToVoucher(context, store),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close),
+                  icon: const Icon(Icons.close_rounded),
                   tooltip: 'Cancel',
                   onPressed: () =>
                       setState(() => _selected.clear()),
@@ -94,52 +113,65 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
               ]
             : [
                 IconButton(
-                  icon: const Icon(Icons.upload_file),
-                  tooltip: 'Upload outstanding report',
-                  onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) =>
-                              const ImportScreen())),
+                  icon: const Icon(Icons.refresh_rounded),
+                  tooltip: 'Refresh',
+                  onPressed: () => _refresh(store),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.share_rounded),
+                  tooltip: 'CSV export / share',
+                  onPressed: () => _export(list),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_rounded),
+                  tooltip: 'Import se data add karo',
+                  onPressed: () async {
+                    if (!await requireEdit(context)) {
+                      return;
+                    }
+                    if (context.mounted) {
+                      Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) =>
+                                  const ImportScreen()));
+                    }
+                  },
                 ),
               ],
       ),
       body: Column(
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            color: widget.voucherMode
-                ? Colors.amber.shade50
-                : Colors.red.shade50,
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment:
-                      MainAxisAlignment.spaceAround,
-                  children: [
-                    _head('Total Outstanding',
-                        _rs(totalOutstanding)),
-                    _head('Is Mah (Payable)',
-                        _rs(totalPayable)),
-                    _head('Pending', '${list.length}'),
-                  ],
-                ),
-                if (store.lastUpdatedAt != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      'Last updated: ${_fmtTime(store.lastUpdatedAt!)}',
-                      style: const TextStyle(
-                          color: Colors.grey, fontSize: 12),
-                    ),
-                  ),
-              ],
+          const ReadOnlyBanner(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpace.m, AppSpace.s, AppSpace.m, 0),
+            child: TextField(
+              style: AppText.body,
+              decoration: const InputDecoration(
+                hintText: 'Search name, A/C no, phone…',
+                prefixIcon: Icon(Icons.search_rounded),
+              ),
+              onChanged: (v) =>
+                  setState(() => _query = v),
             ),
+          ),
+          statHeader(
+            tint: AppColors.tintRose,
+            stats: [
+              StatItem('Total Outstanding', rs(totalOutstanding),
+                  AppColors.dueRed),
+              StatItem(
+                  'Is Mah (Payable)', rs(totalPayable), AppColors.ink),
+              StatItem('Pending', '${list.length}', AppColors.ink),
+            ],
+            footer: store.lastUpdatedAt != null
+                ? 'Last updated: ${fmtDayTime(store.lastUpdatedAt!)}'
+                : null,
           ),
           if (officers.length > 2)
             SizedBox(
-              height: 48,
+              height: 56,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding:
@@ -149,7 +181,9 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 4, vertical: 8),
                           child: ChoiceChip(
-                            label: Text(o),
+                            label: Text(o,
+                                style: const TextStyle(
+                                    fontSize: 16)),
                             selected: _officer == o,
                             onSelected: (_) =>
                                 setState(() => _officer = o),
@@ -160,34 +194,22 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
             ),
           Expanded(
             child: list.isEmpty
-                ? Center(
-                    child: Text(
-                        widget.voucherMode
-                            ? 'Voucher khaali hai.\nOutstanding me long-press karke customers yahan lao.'
-                            : 'All clear! No pending installments.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 16)))
-                : ListView.separated(
+                ? emptyState(
+                    icon: Icons.check_circle_rounded,
+                    title: 'All clear!',
+                    subtitle:
+                        'Koi pending qist nahi hai. Naya mahina ya nayi import par yahan nazar aayenge.',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.only(
+                        bottom: AppSpace.m),
                     itemCount: list.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1),
                     itemBuilder: (context, i) =>
                         _row(context, store, list[i]),
                   ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _head(String label, String value) {
-    return Column(
-      children: [
-        Text(label, style: const TextStyle(color: Colors.grey)),
-        Text(value,
-            style: const TextStyle(
-                fontSize: 20, fontWeight: FontWeight.bold)),
-      ],
     );
   }
 
@@ -201,15 +223,20 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
     });
   }
 
+  /// Multi-select → har customer ke liye amount + date → voucher entries.
   Future<void> _moveToVoucher(
       BuildContext context, CustomerStore store) async {
-    final count = _selected.length;
+    if (!await requireEdit(context)) return;
+    final moving = store.outstanding
+        .where((c) => _selected.contains(c.accountNo))
+        .toList();
+    if (moving.isEmpty) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Voucher me dalo?'),
         content: Text(
-            '$count customer Voucher category me chale jayenge (Outstanding se nikal jayenge).'),
+            '${moving.length} customer Voucher me chale jayenge (Outstanding se nikal jayenge). Har ek ki amount + date puchi jayegi.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -221,103 +248,170 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       ),
     );
     if (confirm != true || !context.mounted) return;
-    final moving = store.outstanding
-        .where((c) => _selected.contains(c.accountNo))
-        .toList();
-    await store.setVoucher(moving, true);
+    for (final c in moving) {
+      if (!context.mounted) break;
+      final entry = await _voucherEntryDialog(context, c);
+      if (entry != null) {
+        await store.addVoucherEntry(entry);
+      }
+    }
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('$count customer Voucher me daal diye')));
+      showAppSnack(
+          context, '${moving.length} customer Voucher me daal diye');
       setState(() => _selected.clear());
     }
+  }
+
+  /// Ek customer ke liye voucher amount + date dialog.
+  Future<VoucherEntry?> _voucherEntryDialog(
+      BuildContext context, Customer c) async {
+    final amountCtrl =
+        TextEditingController(text: c.currentDue.toStringAsFixed(0));
+    DateTime vDate = DateTime.now();
+    double amount = 0;
+    String? err;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => StatefulBuilder(
+        builder: (dctx, setD) => AlertDialog(
+          title: Text(c.name.isEmpty ? '(no name)' : c.name),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('A/C ${c.accountNo}  •  Due ${rs(c.currentDue)}',
+                  style: AppText.body),
+              const SizedBox(height: AppSpace.m),
+              TextField(
+                controller: amountCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                style: AppText.body,
+                decoration: const InputDecoration(
+                  labelText: 'Voucher amount (Rs)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: AppSpace.m),
+              Row(
+                children: [
+                  Expanded(
+                      child: Text('Date: ${isoDate(vDate)}',
+                          style: AppText.body)),
+                  TextButton(
+                    onPressed: () async {
+                      final d = await showDatePicker(
+                        context: dctx,
+                        initialDate: vDate,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now(),
+                      );
+                      if (d != null) setD(() => vDate = d);
+                    },
+                    child: const Text('Badlo'),
+                  ),
+                ],
+              ),
+              if (err != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: AppSpace.s),
+                  child: Text(err!,
+                      style: AppText.body.copyWith(
+                          color: AppColors.dueRed, fontSize: 16)),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dctx, false),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () {
+                final v = double.tryParse(amountCtrl.text
+                        .replaceAll(',', '')
+                        .trim()) ??
+                    0;
+                if (v <= 0) {
+                  setD(() => err = 'Raqam 0 se zyada likhen');
+                  return;
+                }
+                amount = v;
+                Navigator.pop(dctx, true);
+              },
+              child: const Text('Add karo'),
+            ),
+          ],
+        ),
+      ),
+    );
+    amountCtrl.dispose();
+    if (ok != true) return null;
+    return VoucherEntry(
+      id: 'v${DateTime.now().millisecondsSinceEpoch}',
+      accountNo: c.accountNo,
+      customerName: c.name,
+      phone: c.cell,
+      amount: amount,
+      date: isoDate(vDate),
+    );
   }
 
   Widget _row(
       BuildContext context, CustomerStore store, Customer c) {
     final selected = _selected.contains(c.accountNo);
-    return ListTile(
-      leading: _selecting
-          ? Checkbox(
-              value: selected,
-              onChanged: (_) => _toggleSelect(c),
-            )
-          : null,
-      selected: selected,
-      title: Text(c.name.isEmpty ? '(no name)' : c.name,
-          style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(
-          '${c.cell}  •  A/C ${c.accountNo}\nQist ${_rs(c.monthlyInstallment)}  •  Due ${_rs(c.currentDue)}  •  Last ${c.lastInstDate}'),
-      isThreeLine: true,
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.payments, color: Colors.teal),
-            tooltip: 'Collect',
-            onPressed: () => _collectTap(context, store, c),
-          ),
-          FutureBuilder<bool>(
-            future: CallReminderService.hasReminder(c.accountNo),
-            builder: (context, snap) {
-              final has = snap.data == true;
-              return IconButton(
-                icon: Icon(Icons.alarm_add,
-                    color: has ? Colors.orange : Colors.grey),
-                tooltip: has
-                    ? 'Reminder laga hai — badlo/khatam karo'
-                    : 'Call reminder lagao',
-                onPressed: () => _reminderTap(context, c),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.chat, color: Colors.green),
-            tooltip: 'WhatsApp reminder',
-            onPressed: () async {
-              final msg = await dueReminderMessageWithAccounts(c);
-              final ok = await openWhatsApp(c, msg);
-              if (!ok && context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content:
-                          Text('WhatsApp nahi khul saka')),
-                );
-              }
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.call, color: Colors.blue),
-            tooltip: 'Call',
-            onPressed: () =>
-                launchUrl(Uri.parse('tel:${c.cell}')),
-          ),
-        ],
-      ),
-      onLongPress: widget.voucherMode
-          ? null
-          : () => setState(() => _selected.add(c.accountNo)),
-      onTap: _selecting
-          ? () => _toggleSelect(c)
-          : () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) =>
-                        CustomerDetailScreen(customer: c)),
-              ),
+    return FutureBuilder<bool>(
+      future: CallReminderService.hasReminder(c.accountNo),
+      builder: (context, snap) {
+        final has = snap.data == true;
+        return customerRow(
+          context: context,
+          name: c.name,
+          line1: 'A/C ${c.accountNo}  •  ${c.cell}',
+          line2:
+              'Qist ${rs(c.monthlyInstallment)}  •  Last ${c.lastInstDate}',
+          due: c.currentDue,
+          balance: c.balance,
+          reminderOn: has,
+          leading: _selecting
+              ? Checkbox(
+                  value: selected,
+                  onChanged: (_) => _toggleSelect(c),
+                )
+              : null,
+          onCall: () => launchUrl(Uri.parse('tel:${c.cell}')),
+          onWhatsApp: () async {
+            final msg = await dueReminderMessageWithAccounts(c);
+            final ok = await openWhatsApp(c, msg);
+            if (!ok && context.mounted) {
+              showAppSnack(context, 'WhatsApp nahi khul saka');
+            }
+          },
+          onReminder: () async {
+            if (await requireEdit(context)) {
+              _reminderTap(context, c);
+            }
+          },
+          onCollect: () async {
+            if (await requireEdit(context)) {
+              showCollectDialog(context, store, c);
+            }
+          },
+          onTap: _selecting
+              ? () => _toggleSelect(c)
+              : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            CustomerDetailScreen(customer: c)),
+                  ),
+          onLongPress: () async {
+            if (await requireEdit(context)) {
+              setState(() => _selected.add(c.accountNo));
+            }
+          },
+        );
+      },
     );
-  }
-
-  String _fmtReminderTime(DateTime t) {
-    final d = t.day.toString().padLeft(2, '0');
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    var h = t.hour % 12;
-    if (h == 0) h = 12;
-    final m = t.minute.toString().padLeft(2, '0');
-    final ap = t.hour < 12 ? 'AM' : 'PM';
-    return '$d-${months[t.month - 1]} $h:$m $ap';
   }
 
   /// Alarm icon tap: set / change / cancel a call reminder for [c].
@@ -331,7 +425,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
         builder: (_) => AlertDialog(
           title: Text(c.name.isEmpty ? '(no name)' : c.name),
           content: Text(
-              'Reminder laga hai: ${_fmtReminderTime(existing)}.\nBadalna ya khatam karna hai?'),
+              'Reminder laga hai: ${fmtDayTime(existing)}.\nBadalna ya khatam karna hai?'),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context, 'cancel'),
@@ -348,9 +442,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       if (action == 'cancel') {
         await CallReminderService.cancelReminder(c.accountNo);
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Reminder khatam kar diya')));
+          showAppSnack(context, 'Reminder khatam kar diya');
           setState(() {});
         }
         return;
@@ -376,11 +468,8 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
         date.year, date.month, date.day, time.hour, time.minute);
     if (!when.isAfter(DateTime.now())) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-                  'Ye waqt guzar chuka hai — aage ki date/time chuno')),
-        );
+        showAppSnack(context,
+            'Ye waqt guzar chuka hai — aage ki date/time chuno');
       }
       return;
     }
@@ -389,7 +478,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       builder: (_) => AlertDialog(
         title: Text(c.name.isEmpty ? '(no name)' : c.name),
         content: Text(
-            '${_fmtReminderTime(when)} par call reminder lagana hai?'),
+            '${fmtDayTime(when)} par call reminder lagana hai?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -405,144 +494,13 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
         await CallReminderService.scheduleReminderAt(c, when);
     if (context.mounted) {
       if (scheduled == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-                  'Ye waqt guzar chuka hai — aage ki date/time chuno')),
-        );
+        showAppSnack(context,
+            'Ye waqt guzar chuka hai — aage ki date/time chuno');
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-                'Reminder lag gaya: ${_fmtReminderTime(scheduled)}')));
+        showAppSnack(
+            context, 'Reminder lag gaya: ${fmtDayTime(scheduled)}');
         setState(() {});
       }
-    }
-  }
-
-  /// Collect button tap: amount + method + date dialog, then record the
-  /// payment. Partial payments just reduce the due; the customer leaves
-  /// the list only when the due reaches exactly 0.
-  Future<void> _collectTap(
-      BuildContext context, CustomerStore store, Customer c) async {
-    final amountCtrl = TextEditingController(
-        text: c.currentDue > 0
-            ? c.currentDue.toStringAsFixed(0)
-            : c.monthlyInstallment.toStringAsFixed(0));
-    String method = 'Cash';
-    DateTime payDate = DateTime.now();
-    String? err;
-    const methods = ['Cash', 'JazzCash', 'Easypaisa', 'Bank'];
-    double amount = 0;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (dctx) => StatefulBuilder(
-        builder: (dctx, setD) => AlertDialog(
-          title: Text(c.name.isEmpty ? '(no name)' : c.name),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                    'A/C ${c.accountNo}  •  Due ${_rs(c.currentDue)}'),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: amountCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(
-                          decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Received amount (Rs)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: method,
-                  decoration: const InputDecoration(
-                    labelText: 'Method',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: methods
-                      .map((m) => DropdownMenuItem(
-                          value: m, child: Text(m)))
-                      .toList(),
-                  onChanged: (v) => setD(() => method = v ?? 'Cash'),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                        child:
-                            Text('Date: ${_fmtDate(payDate)}')),
-                    TextButton(
-                      onPressed: () async {
-                        final d = await showDatePicker(
-                          context: dctx,
-                          initialDate: payDate,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime.now().add(
-                              const Duration(days: 365)),
-                        );
-                        if (d != null) {
-                          setD(() => payDate = d);
-                        }
-                      },
-                      child: const Text('Badlo'),
-                    ),
-                  ],
-                ),
-                if (err != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(err!,
-                        style: const TextStyle(
-                            color: Colors.red, fontSize: 13)),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dctx, false),
-                child: const Text('Cancel')),
-            TextButton(
-              onPressed: () {
-                final v = double.tryParse(amountCtrl.text
-                        .replaceAll(',', '')
-                        .trim()) ??
-                    0;
-                if (v <= 0) {
-                  setD(() => err = 'Raqam 0 se zyada likho');
-                  return;
-                }
-                if (v > c.currentDue + 0.001) {
-                  setD(() => err =
-                      'Raqam due (${_rs(c.currentDue)}) se zyada nahi ho sakti');
-                  return;
-                }
-                amount = v;
-                Navigator.pop(dctx, true);
-              },
-              child: const Text('Confirm'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirm != true || !context.mounted) return;
-    final ok = await store.collectPayment(c,
-        amount: amount, method: method, date: _fmtDate(payDate));
-    if (context.mounted) {
-      if (ok) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-                '${_rs(amount)} received ($method) — Baqi due: ${_rs(c.currentDue)}')));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Raqam ghalat hai — dobara koshish karo')));
-      }
-      setState(() {});
     }
   }
 }

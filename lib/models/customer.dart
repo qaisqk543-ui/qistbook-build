@@ -95,6 +95,7 @@ class ReceivedPayment {
   final double amount;
   final String method; // Cash | JazzCash | Easypaisa | Bank
   final String date; // yyyy-MM-dd
+  final String month; // yyyy-MM — "Is Mah Received" isi se nikalta hai
 
   ReceivedPayment({
     required this.id,
@@ -103,6 +104,7 @@ class ReceivedPayment {
     this.amount = 0,
     this.method = 'Cash',
     this.date = '',
+    this.month = '',
   });
 
   Map<String, dynamic> toMap() => {
@@ -112,15 +114,62 @@ class ReceivedPayment {
         'amount': amount,
         'method': method,
         'date': date,
+        'month': month,
       };
 
-  factory ReceivedPayment.fromMap(Map<String, dynamic> m) =>
-      ReceivedPayment(
+  factory ReceivedPayment.fromMap(Map<String, dynamic> m) {
+    final date = (m['date'] ?? '').toString();
+    final month = (m['month'] ?? '').toString();
+    return ReceivedPayment(
+      id: (m['id'] ?? '').toString(),
+      accountNo: (m['accountNo'] ?? '').toString(),
+      customerName: (m['customerName'] ?? '').toString(),
+      amount: _num(m['amount']),
+      method: (m['method'] ?? 'Cash').toString(),
+      date: date,
+      month: month.isNotEmpty
+          ? month
+          : (date.length >= 7 ? date.substring(0, 7) : ''),
+    );
+  }
+}
+
+/// Voucher ka ek entry: kisi customer ko kisi date par kitni raqam ka
+/// voucher hua. Ek customer ke kayi vouchers ho sakte hain — history yahin
+/// se banti hai. Rollover (naya mahina) vouchered customers ko freeze
+/// rakhta hai — inki due khud se kabhi nahi badalti.
+class VoucherEntry {
+  final String id; // unique uuid
+  final String accountNo;
+  final String customerName;
+  final String phone;
+  final double amount;
+  final String date; // yyyy-MM-dd
+
+  VoucherEntry({
+    required this.id,
+    required this.accountNo,
+    this.customerName = '',
+    this.phone = '',
+    this.amount = 0,
+    this.date = '',
+  });
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'accountNo': accountNo,
+        'customerName': customerName,
+        'phone': phone,
+        'amount': amount,
+        'date': date,
+      };
+
+  factory VoucherEntry.fromMap(Map<String, dynamic> m) => VoucherEntry(
         id: (m['id'] ?? '').toString(),
         accountNo: (m['accountNo'] ?? '').toString(),
         customerName: (m['customerName'] ?? '').toString(),
+        phone: (m['phone'] ?? '').toString(),
         amount: _num(m['amount']),
-        method: (m['method'] ?? 'Cash').toString(),
         date: (m['date'] ?? '').toString(),
       );
 }
@@ -188,9 +237,6 @@ class Customer {
   String lastCollectedDate; // yyyy-MM-dd
   String lastCollectedMethod; // Cash | JazzCash | Easypaisa | Bank
 
-  /// Voucher category: customer moved out of Outstanding into the Voucher
-  /// tab via multi-select. Leaves Voucher only when currentDue reaches 0.
-  bool inVoucher;
 
   List<Guarantor> guarantors;
   List<CollectionEntry> collections;
@@ -244,7 +290,6 @@ class Customer {
     this.lastCollectedAmount = 0,
     this.lastCollectedDate = '',
     this.lastCollectedMethod = '',
-    this.inVoucher = false,
     List<Guarantor>? guarantors,
     List<CollectionEntry>? collections,
     List<ExtraContact>? extraContacts,
@@ -304,7 +349,6 @@ class Customer {
         'lastCollectedAmount': lastCollectedAmount,
         'lastCollectedDate': lastCollectedDate,
         'lastCollectedMethod': lastCollectedMethod,
-        'inVoucher': inVoucher ? 1 : 0,
         'guarantors': guarantors.map((g) => g.toMap()).toList(),
         'collections': collections.map((c) => c.toMap()).toList(),
         'extraContacts':
@@ -360,7 +404,6 @@ class Customer {
         lastCollectedDate: (m['lastCollectedDate'] ?? '').toString(),
         lastCollectedMethod:
             (m['lastCollectedMethod'] ?? '').toString(),
-        inVoucher: (m['inVoucher'] ?? 0) == 1,
         guarantors: ((m['guarantors'] as List?) ?? [])
             .map((e) => Guarantor.fromMap(Map<String, dynamic>.from(e as Map)))
             .toList(),

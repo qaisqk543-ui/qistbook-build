@@ -18,7 +18,9 @@ import 'package:provider/provider.dart';
 
 import '../models/customer.dart';
 import '../services/customer_store.dart';
+import '../services/error_log.dart';
 import '../services/parsers.dart';
+import '../theme/app_theme.dart';
 import 'manual_entry_screen.dart';
 
 enum DocType { outstanding, statement }
@@ -138,6 +140,8 @@ class _ImportScreenState extends State<ImportScreen> {
 
   // ------------------------------------------------------------ process
 
+  /// Har page alag try/catch me — ek page fail ho to baqi pages ka
+  /// parsed data ZAYA NAHI hota. Failed pages retry/skip dialog me.
   Future<void> _processImages(List<String> paths) async {
     setState(() {
       _busy = true;
@@ -150,10 +154,16 @@ class _ImportScreenState extends State<ImportScreen> {
     try {
       if (_docType == DocType.outstanding) {
         final allLines = <String>[];
+        final failedPages = <int>[];
         for (var i = 0; i < paths.length; i++) {
           setState(
               () => _status = 'Page ${i + 1}/${paths.length}…');
-          allLines.addAll(await _ocrImageFile(paths[i]));
+          try {
+            allLines.addAll(await _ocrImageFile(paths[i]));
+          } catch (e) {
+            ErrorLog.log('Import OCR page ${i + 1}', e);
+            failedPages.add(i);
+          }
         }
         setState(() => _status = 'Data samajh rahe hain…');
         final parsed = parseOutstandingLines(allLines);
@@ -161,21 +171,39 @@ class _ImportScreenState extends State<ImportScreen> {
           _rows = parsed.rows;
           _failed = parsed.failed;
         });
+        if (failedPages.isNotEmpty && mounted) {
+          await _failedPagesDialog(failedPages, paths);
+        }
       } else {
         final drafts = <_StatementDraft>[];
+        final failedPages = <int>[];
         for (var i = 0; i < paths.length; i++) {
           setState(
               () => _status = 'Page ${i + 1}/${paths.length}…');
-          final lines = await _ocrImageFile(paths[i]);
-          final text = lines.join('\n');
-          final tmp = parseStatementPage(text);
-          drafts.add(_StatementDraft(
-              customer: tmp, rawText: text, source: paths[i]));
+          try {
+            final lines = await _ocrImageFile(paths[i]);
+            final text = lines.join('\n');
+            final tmp = parseStatementPage(text);
+            drafts.add(_StatementDraft(
+                customer: tmp, rawText: text, source: paths[i]));
+          } catch (e) {
+            ErrorLog.log('Import OCR page ${i + 1}', e);
+            failedPages.add(i);
+          }
         }
         setState(() => _statements = drafts);
+        if (failedPages.isNotEmpty && mounted) {
+          await _failedPagesDialog(failedPages, paths);
+        }
       }
     } catch (e) {
-      setState(() => _status = 'Error: $e');
+      ErrorLog.log('Import process', e);
+      if (mounted) {
+        await showFriendlyError(
+            context, 'Import me masla aaya: $e',
+            screen: 'Import');
+      }
+      setState(() => _status = 'Error ho gaya');
     } finally {
       setState(() {
         _busy = false;
@@ -185,10 +213,39 @@ class _ImportScreenState extends State<ImportScreen> {
     }
   }
 
+  /// Failed pages: retry (sirf fail walay) ya skip (kamyaab data rakho).
+  Future<void> _failedPagesDialog(
+      List<int> failedPages, List<String> paths) async {
+    final retry = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Kuch pages nahi parhe gaye'),
+        content: Text(
+          '${failedPages.length} page(s) parhne me masla aaya (page ${failedPages.map((i) => i + 1).join(', ')}). Baqi pages ka data MEHFOOZ hai.',
+          style: AppText.body,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Skip karo')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Dobara try karo')),
+        ],
+      ),
+    );
+    if (retry == true && mounted) {
+      final retryPaths =
+          failedPages.map((i) => paths[i]).toList();
+      await _processImages(retryPaths);
+    }
+  }
+
   // ------------------------------------------------------------ save
 
   Future<void> _saveOutstanding() async {
     final store = context.read<CustomerStore>();
+    try {
     var updated = 0, created = 0;
     for (final r in _rows) {
       final res = await store.applyOutstandingRow(r);
@@ -223,10 +280,20 @@ class _ImportScreenState extends State<ImportScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
             'Ho gaya: $updated update, $created naye, $cleared clear.')));
+    } catch (e) {
+      ErrorLog.log('Import save', e);
+      if (mounted) {
+        await showFriendlyError(
+            context, 'Data save nahi ho saka: $e',
+            screen: 'Import save',
+            onRetry: () => _saveOutstanding());
+      }
+    }
   }
 
   Future<void> _saveStatements() async {
     final store = context.read<CustomerStore>();
+    try {
     for (final d in _statements) {
       final existing =
           store.findByAccountNo(d.customer.accountNo);
@@ -241,6 +308,15 @@ class _ImportScreenState extends State<ImportScreen> {
     setState(() => _statements = []);
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Statements save ho gayin.')));
+    } catch (e) {
+      ErrorLog.log('Import save', e);
+      if (mounted) {
+        await showFriendlyError(
+            context, 'Data save nahi ho saka: $e',
+            screen: 'Import save',
+            onRetry: () => _saveStatements());
+      }
+    }
   }
 
   // ------------------------------------------------------------ UI
@@ -412,7 +488,7 @@ class _ImportScreenState extends State<ImportScreen> {
                 Text(subtitle,
                     style: const TextStyle(
                         fontWeight: FontWeight.normal,
-                        fontSize: 13)),
+                        fontSize: 14)),
               ],
             ),
           ),
@@ -536,7 +612,7 @@ class _ImportScreenState extends State<ImportScreen> {
                   contentPadding: EdgeInsets.zero,
                   title: const Text(
                       'Jo naam is list me nahi — unki qist poori (naam hata do)',
-                      style: TextStyle(fontSize: 13)),
+                      style: TextStyle(fontSize: 14)),
                   value: _markCleared,
                   onChanged: (v) =>
                       setState(() => _markCleared = v ?? true),

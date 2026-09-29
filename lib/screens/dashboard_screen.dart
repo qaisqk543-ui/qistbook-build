@@ -5,6 +5,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../services/access_control.dart';
 import '../services/customer_store.dart';
 import '../services/firebase_service.dart';
 import 'payment_accounts_screen.dart';
@@ -95,11 +96,16 @@ class DashboardScreen extends StatelessWidget {
               subtitle: const Text(
                   'JazzCash / Easypaisa / Bank — reminders me khud share honge'),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) =>
-                          const PaymentAccountsScreen())),
+              onTap: () async {
+                if (!await requireEdit(context)) return;
+                if (context.mounted) {
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              const PaymentAccountsScreen()));
+                }
+              },
             ),
           ),
           const SizedBox(height: 20),
@@ -123,7 +129,7 @@ class DashboardScreen extends StatelessWidget {
                     'Ye app Udhar Book ki tarah offline poori chalti hai — '
                     'bina internet ke sab kuch dekhen, scan karen, edit karen. '
                     'Jab internet milega to data khud sync ho jayega.',
-                    style: TextStyle(color: Colors.grey, fontSize: 13),
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
                   ),
                 ),
               ],

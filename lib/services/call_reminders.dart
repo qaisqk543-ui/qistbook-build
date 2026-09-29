@@ -150,8 +150,62 @@ class CallReminderService {
     return when;
   }
 
-  static Future<void> cancelReminder(String accountNo) async {
+  /// Monthly rollover notification: "Naya mahina shuru — N customers ki
+  /// due update ho gayi". Kabhi throw nahi karta.
+  static Future<void> notifyRollover(int n) async {
+    if (n <= 0) return;
     try {
+      await init();
+      const androidDetails = AndroidNotificationDetails(
+        'qistbook_updates',
+        'QistBook Updates',
+        channelDescription: 'Monthly updates aur ahem ittila',
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+      const details = NotificationDetails(android: androidDetails);
+      await _plugin.show(
+        9001,
+        'Naya mahina shuru',
+        '$n customers ki due update ho gayi — Outstanding check karein.',
+        details,
+      );
+    } catch (_) {}
+  }
+
+  /// Subscription expiry se 3 din pehle ki notification (id 9002).
+  static Future<void> scheduleExpiryReminder(
+      DateTime when) async {
+    try {
+      await init();
+      const androidDetails = AndroidNotificationDetails(
+        'qistbook_updates',
+        'QistBook Updates',
+        channelDescription: 'Monthly updates aur ahem ittila',
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+      const details =
+          NotificationDetails(android: androidDetails);
+      await _plugin.zonedSchedule(
+        9002,
+        'Subscription khatam hone wali hai',
+        'QistBook subscription 3 din me khatam — renew karwa lein taake kaam ruke nahi.',
+        tz.TZDateTime.from(when, tz.local),
+        details,
+        androidScheduleMode:
+            AndroidScheduleMode.exactAllowWhileIdle,
+      );
+    } catch (_) {}
+  }
+
+  static Future<void> cancelExpiryReminder() async {
+    try {
+      await _plugin.cancel(9002);
+    } catch (_) {}
+  }
+
+  static Future<void> cancelReminder(String accountNo) async {    try {
       await _plugin.cancel(_notifId(accountNo));
     } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
@@ -207,6 +261,46 @@ class CallReminderService {
       'timeMillis': when.millisecondsSinceEpoch,
     });
     await prefs.setString(_prefsKey, jsonEncode(list));
+  }
+
+  /// Self Repair: saved reminders me se jo guzar gaye unhe saaf karo,
+  /// aur jo scheduled hone chahiye thay lekin notification ghaib hai
+  /// (system ne maar di) unhe dobara schedule karo.
+  /// Returns {'rescheduled': x, 'cleaned': y}.
+  static Future<Map<String, int>> verifyReminders() async {
+    var rescheduled = 0;
+    var cleaned = 0;
+    try {
+      await init();
+      final prefs = await SharedPreferences.getInstance();
+      final list = await _loadRaw(prefs);
+      if (list.isEmpty) return {'rescheduled': 0, 'cleaned': 0};
+      final pending = await _plugin.pendingNotificationRequests();
+      final pendingIds = pending.map((e) => e.id).toSet();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final kept = <Map<String, dynamic>>[];
+      for (final m in list) {
+        final t = (m['timeMillis'] as int?) ?? 0;
+        final acct = (m['accountNo'] as String?) ?? '';
+        if (t <= now || acct.isEmpty) {
+          cleaned++; // waqt guzar gaya / invalid — list se hatao
+          continue;
+        }
+        kept.add(m);
+        if (!pendingIds.contains(_notifId(acct))) {
+          final c = lookupCustomer?.call(acct);
+          if (c != null) {
+            try {
+              await scheduleReminderAt(
+                  c, DateTime.fromMillisecondsSinceEpoch(t));
+              rescheduled++;
+            } catch (_) {}
+          }
+        }
+      }
+      await prefs.setString(_prefsKey, jsonEncode(kept));
+    } catch (_) {}
+    return {'rescheduled': rescheduled, 'cleaned': cleaned};
   }
 }
 
