@@ -13,7 +13,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:pdf_render/pdf_render.dart';
+import 'package:pdfx/pdfx.dart';
 import 'package:provider/provider.dart';
 
 import '../models/customer.dart';
