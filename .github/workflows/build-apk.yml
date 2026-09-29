@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      KEYSTORE_PASSWORD: 'Katz@7kptke6h!'
-      KEY_PASSWORD: 'Katz@7kptke6h!'
+      KEYSTORE_PASSWORD: 'Katz@33i6g6pn!'
+      KEY_PASSWORD: 'Katz@33i6g6pn!'
 
     steps:
       - name: Checkout
