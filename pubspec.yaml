@@ -46,3 +46,4 @@ flutter:
 dependency_overrides:
   win32: ^5.5.0
   flutter_plugin_android_lifecycle: ^2.0.35
+  url_launcher_android: ^6.3.33
