@@ -1,0 +1,68 @@
+name: Build QistBook APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Patch old plugins (namespace + manifest)
+        run: |
+          PUB_CACHE=~/.pub-cache/hosted/pub.dev
+          for f in "$PUB_CACHE"/*/android/build.gradle; do
+            if [ -f "$f" ] && ! grep -q "namespace" "$f"; then
+              dirname=$(basename $(dirname $(dirname "$f")))
+              plugin=$(echo "$dirname" | sed 's/-[0-9].*//' | tr '-' '_' | tr '.' '_')
+              echo "Patching $dirname as $plugin"
+              sed -i "s/android {/android {\n    namespace \"$plugin\"/" "$f"
+              # Remove package attribute from AndroidManifest.xml if present
+              manifest="$(dirname "$f")/src/main/AndroidManifest.xml"
+              if [ -f "$manifest" ] && grep -q 'package=' "$manifest"; then
+                echo "Removing package attr from $manifest"
+                sed -i 's/ package="[^"]*"//' "$manifest"
+              fi
+            fi
+          done
+
+      - name: Set up release keystore
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/qistbook.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/qistbook.jks" >> "$GITHUB_ENV"
+          else
+            echo "No KEYSTORE_BASE64 secret — release will use debug keys"
+          fi
+
+      - name: Build APK (release)
+        run: flutter build apk --release
+        env:
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qistbook-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
