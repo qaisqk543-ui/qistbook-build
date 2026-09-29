@@ -1,0 +1,82 @@
+name: Build Release APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      KEYSTORE_PASSWORD: 'Katz@7kptke6h!'
+      KEY_PASSWORD: 'Katz@7kptke6h!'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Gradle 8.2
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt/gradle
+          echo "/opt/gradle/gradle-8.2/bin" >> $GITHUB_PATH
+
+      - name: Generate Gradle Wrapper
+        run: |
+          /opt/gradle/gradle-8.2/bin/gradle wrapper --gradle-version 8.2 --distribution-type bin
+          chmod +x gradlew
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          channel: 'stable'
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build Flutter APK
+        run: flutter build apk --release
+
+      - name: Copy Flutter APK to expected path
+        run: |
+          mkdir -p app/build/outputs/apk/release
+          cp build/app/outputs/flutter-apk/app-release.apk app/build/outputs/apk/release/app-release.apk
+      - name: Generate Keystore
+        run: |
+          mkdir -p app
+          keytool -genkeypair \
+            -keystore app/keystore.jks \
+            -alias appkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass '${{ env.KEYSTORE_PASSWORD }}' \
+            -keypass '${{ env.KEY_PASSWORD }}' \
+            -dname 'CN=App,OU=App,O=App,L=City,ST=State,C=US' \
+            -storetype JKS \
+            -noprompt
+          echo "Keystore generated OK"
+
+      - name: Copy Flutter APK (already built above)
+        run: echo "APK was built in Flutter step above"
+      - name: Verify APK exists
+        run: |
+          find app/build/outputs/apk/release -name "*.apk" -type f
+          ls -la app/build/outputs/apk/release/
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QistBook-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 7
+          if-no-files-found: error
