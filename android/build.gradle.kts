@@ -1,13 +1,7 @@
 allprojects {
     repositories {
-        maven {
-            url = uri("http://127.0.0.1:3133/")
-            isAllowInsecureProtocol = true
-        }
-        maven {
-            url = uri("http://127.0.0.1:3133/")
-            isAllowInsecureProtocol = true
-        }
+        google()
+        mavenCentral()
     }
 }
 
