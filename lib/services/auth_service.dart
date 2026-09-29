@@ -210,7 +210,7 @@ class AuthService {
     await _save(user);
     _hasAnyUserCached = true;
     await _setSession(user);
-    // Naye user ko 7 din ka free trial (full access).
+    // Naye user ko 30 din ka free trial (full access).
     await SubscriptionService.startTrial(id);
     return AuthResult.ok(user);
   }

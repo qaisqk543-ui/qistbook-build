@@ -73,7 +73,7 @@ void _showCrashScreen(Object error, StackTrace? stack) {
         body: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: SelectableText(
-            'App khulne me masla aaya:\n\n$error\n\n$stack',
+            'QistBook v$kAppVersion — Error\n\nApp khulne me masla aaya:\n\n$error\n\n$stack',
             style: const TextStyle(fontSize: 13),
           ),
         ),

@@ -54,7 +54,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
         _pending = pending;
         _expiredNote = (exp != null && exp.isBefore(DateTime.now()))
             ? (wasTrial && status == 'trial'
-                ? 'Aap ka 7 din ka free trial khatam ho gaya — subscription lein taake kaam jari rahe.'
+                ? 'Aap ka 30 din ka free trial khatam ho gaya — subscription lein taake kaam jari rahe.'
                 : 'Apki subscription ${fmtDay(exp)} ko khatam ho gayi thi.')
             : null;
       });

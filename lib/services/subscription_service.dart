@@ -28,8 +28,13 @@ class SubscriptionService {
 
   static const defaultFee = 500;
 
+  /// MASTER SWITCH: false = app poori FREE (koi payment/trial/lock nahi).
+  /// Jab Qais kahe ke paid karna hai to true kar do — sara system wapas on.
+  static const paymentsEnabled = false;
+
   /// Naye user ko itne din ka free trial (full access).
-  static const trialDays = 7;
+  /// (Qais ki demand par 7 se 30 din kar diya.)
+  static const trialDays = 30;
 
   // ---------------------------------------------------------- keys
   static String _k(String uid, String name) => '${name}_$uid';
@@ -89,16 +94,20 @@ class SubscriptionService {
   }
 
   /// Active = owner bypass ya expiry abhi baqi (trial bhi active hai).
+  /// paymentsEnabled=false ho to hamesha active (app free).
   static Future<bool> isActive(String uid) async {
+    if (!paymentsEnabled) return true;
     if (await isOwner()) return true;
     final exp = await expiryOf(uid);
     return exp != null && exp.isAfter(DateTime.now());
   }
 
   // ---------------------------------------------------------- free trial
-  /// Naye signup par 7 din ka free trial (full access). Sirf ek dafa —
+  /// Naye signup par 30 din ka free trial (full access). Sirf ek dafa —
   /// device aur user dono level par check. Returns true agar trial laga.
+  /// paymentsEnabled=false ho to trial ka koi kaam nahi (app free hai).
   static Future<bool> startTrial(String uid) async {
+    if (!paymentsEnabled) return false;
     try {
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool(_trialDeviceKey) == true) return false;
@@ -134,6 +143,7 @@ class SubscriptionService {
 
   /// Trial ke baqi din (trial na ho to 0).
   static Future<int> trialDaysLeft(String uid) async {
+    if (!paymentsEnabled) return 0;
     if (!await isTrial(uid)) return 0;
     return daysLeft(uid);
   }
@@ -181,8 +191,10 @@ class SubscriptionService {
 
   /// App start par: active ho aur 3 din ke andar expiry ho to reminder pakka karo.
   /// Trial ka apna 1-din-pehle wala reminder hai — is liye trial par skip.
+  /// paymentsEnabled=false ho to kuch nahi (app free hai).
   static Future<void> ensureExpiryReminder(String uid) async {
     try {
+      if (!paymentsEnabled) return;
       if (await isOwner()) return;
       if (await isTrial(uid)) return;
       final exp = await expiryOf(uid);

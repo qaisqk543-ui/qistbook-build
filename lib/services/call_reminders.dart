@@ -222,7 +222,7 @@ class CallReminderService {
       await _plugin.zonedSchedule(
         9003,
         'Free trial kal khatam ho raha hai',
-        'QistBook ka 7 din ka free trial kal khatam — subscription lein taake kaam ruke nahi.',
+        'QistBook ka 30 din ka free trial kal khatam — subscription lein taake kaam ruke nahi.',
         tz.TZDateTime.from(when, tz.local),
         details,
         androidScheduleMode:
