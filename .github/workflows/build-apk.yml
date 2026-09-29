@@ -26,16 +26,21 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Patch old plugins (add namespace)
+      - name: Patch old plugins (namespace + manifest)
         run: |
           PUB_CACHE=~/.pub-cache/hosted/pub.dev
           for f in "$PUB_CACHE"/*/android/build.gradle; do
             if [ -f "$f" ] && ! grep -q "namespace" "$f"; then
-              # Get plugin name without version, sanitize for Java package
               dirname=$(basename $(dirname $(dirname "$f")))
               plugin=$(echo "$dirname" | sed 's/-[0-9].*//' | tr '-' '_' | tr '.' '_')
               echo "Patching $dirname as $plugin"
               sed -i "s/android {/android {\n    namespace \"$plugin\"/" "$f"
+              # Remove package attribute from AndroidManifest.xml if present
+              manifest="$(dirname "$f")/src/main/AndroidManifest.xml"
+              if [ -f "$manifest" ] && grep -q 'package=' "$manifest"; then
+                echo "Removing package attr from $manifest"
+                sed -i 's/ package="[^"]*"//' "$manifest"
+              fi
             fi
           done
 
