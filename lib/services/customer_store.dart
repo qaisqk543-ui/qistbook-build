@@ -377,6 +377,11 @@ class CustomerStore extends ChangeNotifier {
       existing.status = row.currentDue > 0
           ? AccountStatus.overdue
           : AccountStatus.active;
+      // Reconcile with local collection: fresh import shows nothing due
+      // anymore → the locally-collected flag is no longer needed.
+      if (existing.collectedLocally && row.currentDue == 0) {
+        existing.collectedLocally = false;
+      }
       await _persist(existing);
       _sort();
       notifyListeners();
@@ -434,6 +439,27 @@ class CustomerStore extends ChangeNotifier {
     } else {
       _customers.add(c);
     }
+    await _persist(c);
+    _sort();
+    notifyListeners();
+  }
+
+  /// Mark a customer's installment as collected (moves Outstanding -> Received).
+  Future<void> markCollected(
+      Customer c, double amount, String method) async {
+    c.collectedLocally = true;
+    c.lastCollectedAmount = amount;
+    c.lastCollectedMethod = method;
+    c.lastCollectedDate =
+        DateTime.now().toIso8601String().substring(0, 10);
+    await _persist(c);
+    _sort();
+    notifyListeners();
+  }
+
+  /// Undo a local collection (moves Received -> Outstanding).
+  Future<void> undoCollected(Customer c) async {
+    c.collectedLocally = false;
     await _persist(c);
     _sort();
     notifyListeners();

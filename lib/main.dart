@@ -8,6 +8,7 @@ import 'screens/dashboard_screen.dart';
 import 'screens/import_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/outstanding_screen.dart';
+import 'screens/received_screen.dart';
 import 'services/call_reminders.dart';
 import 'services/customer_store.dart';
 import 'services/firebase_service.dart';
@@ -136,6 +137,7 @@ class _HomeShellState extends State<HomeShell> {
 
   static const _pages = [
     OutstandingScreen(),
+    ReceivedScreen(),
     CustomerListScreen(),
     ImportScreen(),
     DashboardScreen(),
@@ -167,6 +169,8 @@ class _HomeShellState extends State<HomeShell> {
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.warning_amber), label: 'Outstanding'),
+          NavigationDestination(
+              icon: Icon(Icons.task_alt), label: 'Received'),
           NavigationDestination(
               icon: Icon(Icons.people), label: 'Customers'),
           NavigationDestination(

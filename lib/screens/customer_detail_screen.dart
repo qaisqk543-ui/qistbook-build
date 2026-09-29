@@ -213,8 +213,11 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                     icon: const Icon(Icons.chat,
                         color: Colors.green, size: 30),
                     tooltip: 'WhatsApp ${c.cell}',
-                    onPressed: () =>
-                        openWhatsApp(c, dueReminderMessage(c)),
+                    onPressed: () async {
+                      final msg =
+                          await dueReminderMessageWithAccounts(c);
+                      openWhatsApp(c, msg);
+                    },
                   ),
                 ],
               ),
@@ -307,8 +310,11 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                   style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white),
-                  onPressed: () =>
-                      openWhatsApp(c, dueReminderMessage(c)),
+                  onPressed: () async {
+                    final msg =
+                        await dueReminderMessageWithAccounts(c);
+                    openWhatsApp(c, msg);
+                  },
                 ),
               ),
             ],
@@ -469,7 +475,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   }
 
   Future<void> _sendSms(BuildContext context) async {
-    final ok = await sendSms(c.cell, dueReminderMessage(c));
+    final msg = await dueReminderMessageWithAccounts(c);
+    final ok = await sendSms(c.cell, msg);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:

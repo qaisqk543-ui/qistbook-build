@@ -46,6 +46,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
     final pending = store.customers
         .where((c) =>
             c.status != AccountStatus.cleared &&
+            !c.collectedLocally &&
             (c.currentDue > 0 || c.balance > 0))
         .toList();
     final officers = <String>[
@@ -169,6 +170,11 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          IconButton(
+            icon: const Icon(Icons.payments, color: Colors.teal),
+            tooltip: 'Collect',
+            onPressed: () => _collectTap(context, c),
+          ),
           FutureBuilder<bool>(
             future: CallReminderService.hasReminder(c.accountNo),
             builder: (context, snap) {
@@ -187,8 +193,8 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
             icon: const Icon(Icons.chat, color: Colors.green),
             tooltip: 'WhatsApp reminder',
             onPressed: () async {
-              final ok =
-                  await openWhatsApp(c, dueReminderMessage(c));
+              final msg = await dueReminderMessageWithAccounts(c);
+              final ok = await openWhatsApp(c, msg);
               if (!ok && context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -300,6 +306,74 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
               Text('Reminder lag gaya: ${_fmtReminderTime(when)}')));
+      setState(() {});
+    }
+  }
+
+  /// Collect button tap: amount + method dialog, then move to Received.
+  Future<void> _collectTap(BuildContext context, Customer c) async {
+    final store = context.read<CustomerStore>();
+    final amountCtrl = TextEditingController(
+        text: c.currentDue > 0
+            ? c.currentDue.toStringAsFixed(0)
+            : c.monthlyInstallment.toStringAsFixed(0));
+    String method = 'Cash';
+    const methods = ['Cash', 'JazzCash', 'Easypaisa', 'Bank'];
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dctx) => StatefulBuilder(
+        builder: (dctx, setD) => AlertDialog(
+          title: Text(c.name.isEmpty ? '(no name)' : c.name),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('A/C ${c.accountNo}  •  Due ${_rs(c.currentDue)}'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Received amount (Rs)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: method,
+                decoration: const InputDecoration(
+                  labelText: 'Method',
+                  border: OutlineInputBorder(),
+                ),
+                items: methods
+                    .map((m) =>
+                        DropdownMenuItem(value: m, child: Text(m)))
+                    .toList(),
+                onChanged: (v) => setD(() => method = v ?? 'Cash'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dctx, false),
+                child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(dctx, true),
+                child: const Text('Confirm')),
+          ],
+        ),
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    final amount =
+        double.tryParse(amountCtrl.text.replaceAll(',', '').trim()) ??
+            c.currentDue;
+    await store.markCollected(c, amount, method);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'Rs ${amount.toStringAsFixed(0)} received ($method)')));
       setState(() {});
     }
   }

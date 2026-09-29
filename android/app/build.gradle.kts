@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.kistbook"
+    namespace = "com.qaisqk543.qistbook"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -18,8 +18,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.kistbook"
+        applicationId = "com.qaisqk543.qistbook"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -32,11 +31,29 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            // Release keystore comes from CI secrets (KEYSTORE_PATH etc.).
+            // Local builds without those env vars fall back to debug keys.
+            val ksPath = System.getenv("KEYSTORE_PATH")
+            if (!ksPath.isNullOrEmpty()) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            val ksPath = System.getenv("KEYSTORE_PATH")
+            signingConfig = if (!ksPath.isNullOrEmpty()) {
+                signingConfigs.getByName("release")
+            } else {
+                // Local build: debug keys so `flutter run --release` works.
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = false
             isShrinkResources = false
         }

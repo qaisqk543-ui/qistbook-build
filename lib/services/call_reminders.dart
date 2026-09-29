@@ -240,8 +240,8 @@ class ReminderDialog extends StatelessWidget {
           icon: const Icon(Icons.chat, color: Colors.green),
           label: const Text('WhatsApp'),
           onPressed: () async {
-            final ok =
-                await openWhatsApp(c, dueReminderMessage(c));
+            final msg = await dueReminderMessageWithAccounts(c);
+            final ok = await openWhatsApp(c, msg);
             if (!ok && context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -255,8 +255,8 @@ class ReminderDialog extends StatelessWidget {
           icon: const Icon(Icons.sms),
           label: const Text('SMS'),
           onPressed: () async {
-            final ok =
-                await sendSms(c.cell, dueReminderMessage(c));
+            final msg = await dueReminderMessageWithAccounts(c);
+            final ok = await sendSms(c.cell, msg);
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(

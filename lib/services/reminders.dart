@@ -7,6 +7,7 @@ import 'package:telephony/telephony.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/customer.dart';
+import 'payment_accounts.dart';
 
 final _telephony = Telephony.instance;
 
@@ -26,6 +27,25 @@ String dueReminderMessage(Customer c, {bool urdu = true}) {
 String paidConfirmationMessage(Customer c, double amount) {
   return 'Assalam o Alaikum ${c.name}, Rs ${amount.toStringAsFixed(0)} '
       'ki adayegi moosool ho gayi hai. Shukriya — ALIF ELECTRONICS.';
+}
+
+/// Saved payment accounts as shareable lines, e.g.
+/// "JazzCash (ALIF ELECTRONICS) - 03001234567".
+/// Empty string when no accounts are saved.
+Future<String> paymentAccountsText() async {
+  final accounts = await loadAccounts();
+  if (accounts.isEmpty) return '';
+  return accounts
+      .map((a) => '${a.type} (${a.title}) - ${a.number}')
+      .join('\n');
+}
+
+/// Due reminder + payment accounts (auto-shared in SMS/WhatsApp).
+Future<String> dueReminderMessageWithAccounts(Customer c) async {
+  final base = dueReminderMessage(c);
+  final acc = await paymentAccountsText();
+  if (acc.isEmpty) return base;
+  return '$base\n\nAdaigi ke liye:\n$acc';
 }
 
 /// Sends an SMS straight from the device. Returns true on success.

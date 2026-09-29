@@ -125,8 +125,10 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
           IconButton(
             icon: const Icon(Icons.chat, color: Colors.green),
             tooltip: 'WhatsApp',
-            onPressed: () => openWhatsApp(
-                c, dueReminderMessage(c)),
+            onPressed: () async {
+              final msg = await dueReminderMessageWithAccounts(c);
+              openWhatsApp(c, msg);
+            },
           ),
         ],
       ),

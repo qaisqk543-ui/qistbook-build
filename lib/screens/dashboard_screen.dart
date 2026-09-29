@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../services/customer_store.dart';
 import '../services/firebase_service.dart';
+import 'payment_accounts_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -80,6 +81,26 @@ class DashboardScreen extends StatelessWidget {
                 ),
               );
             }),
+          const SizedBox(height: 20),
+          const Text('Payments',
+              style:
+                  TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.account_balance_wallet,
+                  color: Colors.teal),
+              title: const Text('Payment Accounts'),
+              subtitle: const Text(
+                  'JazzCash / Easypaisa / Bank — reminders me khud share honge'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) =>
+                          const PaymentAccountsScreen())),
+            ),
+          ),
           const SizedBox(height: 20),
           const Text('Internet / Data',
               style:

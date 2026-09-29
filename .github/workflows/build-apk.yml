@@ -44,8 +44,22 @@ jobs:
             fi
           done
 
+      - name: Set up release keystore
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/qistbook.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/qistbook.jks" >> "$GITHUB_ENV"
+          else
+            echo "No KEYSTORE_BASE64 secret — release will use debug keys"
+          fi
+
       - name: Build APK (release)
         run: flutter build apk --release
+        env:
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

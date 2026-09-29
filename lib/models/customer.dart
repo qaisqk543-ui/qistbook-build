@@ -141,6 +141,13 @@ class Customer {
   AccountStatus status;
   bool needsDetail; // true when created from outstanding-only import
 
+  /// Locally marked as collected (Outstanding -> Received). Cleared when a
+  /// fresh outstanding import shows currentDue == 0 for this account.
+  bool collectedLocally;
+  double lastCollectedAmount;
+  String lastCollectedDate; // yyyy-MM-dd
+  String lastCollectedMethod; // Cash | JazzCash | Easypaisa | Bank
+
   List<Guarantor> guarantors;
   List<CollectionEntry> collections;
 
@@ -189,6 +196,10 @@ class Customer {
     this.officer = '',
     this.status = AccountStatus.active,
     this.needsDetail = false,
+    this.collectedLocally = false,
+    this.lastCollectedAmount = 0,
+    this.lastCollectedDate = '',
+    this.lastCollectedMethod = '',
     List<Guarantor>? guarantors,
     List<CollectionEntry>? collections,
     List<ExtraContact>? extraContacts,
@@ -244,6 +255,10 @@ class Customer {
         'officer': officer,
         'status': status.index,
         'needsDetail': needsDetail ? 1 : 0,
+        'collectedLocally': collectedLocally ? 1 : 0,
+        'lastCollectedAmount': lastCollectedAmount,
+        'lastCollectedDate': lastCollectedDate,
+        'lastCollectedMethod': lastCollectedMethod,
         'guarantors': guarantors.map((g) => g.toMap()).toList(),
         'collections': collections.map((c) => c.toMap()).toList(),
         'extraContacts':
@@ -294,6 +309,11 @@ class Customer {
             (m['status'] is int ? m['status'] as int : 0) %
                 AccountStatus.values.length],
         needsDetail: (m['needsDetail'] ?? 0) == 1,
+        collectedLocally: (m['collectedLocally'] ?? 0) == 1,
+        lastCollectedAmount: _num(m['lastCollectedAmount']),
+        lastCollectedDate: (m['lastCollectedDate'] ?? '').toString(),
+        lastCollectedMethod:
+            (m['lastCollectedMethod'] ?? '').toString(),
         guarantors: ((m['guarantors'] as List?) ?? [])
             .map((e) => Guarantor.fromMap(Map<String, dynamic>.from(e as Map)))
             .toList(),
