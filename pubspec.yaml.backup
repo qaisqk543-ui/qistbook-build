@@ -1,7 +1,7 @@
 name: kistbook
 description: Kist Book - installment (qist) management app for shops.
 publish_to: 'none'
-version: 1.0.6+7
+version: 1.0.0+1
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -9,34 +9,31 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
-  provider: ^6.1.5
+  cupertino_icons: ^1.0.6
+  provider: ^6.1.1
   # OCR - on-device text recognition for scanning printed pages
-  google_mlkit_text_recognition: ^0.17.1
+  google_mlkit_text_recognition: ^0.13.1
   # Pick images (camera/gallery) and PDF files
-  image_picker: ^1.2.3
+  image_picker: ^1.0.7
   file_picker: ^8.0.0
   # Render PDF pages to images so OCR can read them
-  pdfx: ^2.11.0
+  pdf_render: ^1.4.12
   # Firebase: login (phone OTP / email) + private per-user cloud sync
-  firebase_core: ^4.15.0
-  firebase_auth: ^6.7.0
-  cloud_firestore: ^6.10.0
+  firebase_core: ^2.24.2
+  firebase_auth: ^4.15.3
+  cloud_firestore: ^4.13.6
   # Local database (offline cache; Firestore is the source of truth)
-  sqflite: ^2.4.1
+  sqflite: ^2.3.2
   path: ^1.8.3
-  path_provider: ^2.1.5
+  path_provider: ^2.1.2
   # Open WhatsApp chats + phone dialer
-  url_launcher: ^6.3.2
+  url_launcher: ^6.2.4
   # Send SMS directly from the phone (Android)
   telephony: ^0.2.0
   # Internet check + data-saver setting (social packages)
-  connectivity_plus: ^7.3.1
-  shared_preferences: ^2.5.3
-  intl: ^0.20.3
-  # Scheduled call reminders (local notifications at a chosen time)
-  flutter_local_notifications: ^19.4.0
-  timezone: ^0.10.1
+  connectivity_plus: ^6.1.0
+  shared_preferences: ^2.3.2
+  intl: ^0.18.1
 
 dev_dependencies:
   flutter_test:
@@ -49,4 +46,3 @@ flutter:
 dependency_overrides:
   win32: ^5.5.0
   flutter_plugin_android_lifecycle: ^2.0.35
-  url_launcher_android: ^6.3.33
