@@ -26,14 +26,14 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Patch pdf_render namespace
+      - name: Patch old plugins (add namespace)
         run: |
           PUB_CACHE=~/.pub-cache/hosted/pub.dev
-          for d in "$PUB_CACHE"/pdf_render-*; do
-            f="$d/android/build.gradle"
+          for f in "$PUB_CACHE"/*/android/build.gradle; do
             if [ -f "$f" ] && ! grep -q "namespace" "$f"; then
-              echo "Patching $f"
-              sed -i 's/android {/android {\n    namespace "com.example.pdf_render"/' "$f"
+              plugin=$(basename $(dirname $(dirname "$f")))
+              echo "Patching $plugin"
+              sed -i "s/android {/android {\n    namespace \"$plugin\"/" "$f"
             fi
           done
 
