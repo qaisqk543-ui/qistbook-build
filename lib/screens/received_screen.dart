@@ -1,5 +1,7 @@
-/// Received screen: customers whose installment was marked as collected
-/// locally (moved out of Outstanding). Undo sends them back.
+/// Received screen: every received payment entry (full or partial).
+/// Undo removes the entry and adds the amount back to the customer's
+/// currentDue + balance (they reappear in Outstanding / Voucher).
+library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -22,11 +24,8 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
   @override
   Widget build(BuildContext context) {
     final store = context.watch<CustomerStore>();
-    final list = store.customers
-        .where((c) => c.collectedLocally)
-        .toList();
-    final total =
-        list.fold(0.0, (s, c) => s + c.lastCollectedAmount);
+    final list = store.receivedPayments;
+    final total = store.totalReceived;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Received')),
@@ -76,33 +75,53 @@ class _ReceivedScreenState extends State<ReceivedScreen> {
   }
 
   Widget _row(
-      BuildContext context, CustomerStore store, Customer c) {
+      BuildContext context, CustomerStore store, ReceivedPayment p) {
+    final c = store.findByAccountNo(p.accountNo);
     return ListTile(
       leading: const Icon(Icons.check_circle, color: Colors.green),
-      title: Text(c.name.isEmpty ? '(no name)' : c.name,
+      title: Text(
+          p.customerName.isEmpty ? '(no name)' : p.customerName,
           style: const TextStyle(fontWeight: FontWeight.w600)),
       subtitle: Text(
-          '${c.cell}  •  A/C ${c.accountNo}\n${_rs(c.lastCollectedAmount)}  •  ${c.lastCollectedMethod}  •  ${c.lastCollectedDate}'),
+          'A/C ${p.accountNo}\n${_rs(p.amount)}  •  ${p.method}  •  ${p.date}'),
       isThreeLine: true,
       trailing: IconButton(
         icon: const Icon(Icons.undo, color: Colors.orange),
-        tooltip: 'Wapas Outstanding me',
+        tooltip: 'Undo — raqam wapas due me',
         onPressed: () async {
-          await store.undoCollected(c);
+          final confirm = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Undo payment?'),
+              content: Text(
+                  '${_rs(p.amount)} (${p.method}, ${p.date}) wapas due me add ho jayegi.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Nahi')),
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Haan, undo karo')),
+              ],
+            ),
+          );
+          if (confirm != true || !context.mounted) return;
+          await store.undoPayment(p);
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content:
-                        Text('Wapas Outstanding me bhej diya')));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(
+                    'Undo ho gaya — ${_rs(p.amount)} wapas due me')));
             setState(() {});
           }
         },
       ),
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => CustomerDetailScreen(customer: c)),
-      ),
+      onTap: c == null
+          ? null
+          : () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => CustomerDetailScreen(customer: c)),
+              ),
     );
   }
 }

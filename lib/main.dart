@@ -175,6 +175,7 @@ class _HomeShellState extends State<HomeShell> {
     CustomerListScreen(),
     ImportScreen(),
     DashboardScreen(),
+    OutstandingScreen(voucherMode: true),
   ];
 
   @override
@@ -211,6 +212,8 @@ class _HomeShellState extends State<HomeShell> {
               icon: Icon(Icons.document_scanner), label: 'Import'),
           NavigationDestination(
               icon: Icon(Icons.dashboard), label: 'Dashboard'),
+          NavigationDestination(
+              icon: Icon(Icons.receipt_long), label: 'Voucher'),
         ],
       ),
     );

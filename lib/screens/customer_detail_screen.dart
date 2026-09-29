@@ -2,6 +2,7 @@
 /// Paisa/hisaab (import-only): sirf import se update hota hai.
 /// Contacts + Notes: user khud add/edit kar sakta hai (har change save hota
 /// hai aur cloud me sync hota hai jab Firebase laga ho).
+library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -35,6 +36,33 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   Future<void> _persist() async {
     await context.read<CustomerStore>().saveCustomer(c);
     if (mounted) setState(() {});
+  }
+
+  /// Voucher customer ko wapas Outstanding me bhejo (ghalti se dala ho to).
+  Future<void> _moveBackFromVoucher(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Wapas Outstanding me?'),
+        content: Text(
+            '${c.name} Voucher se nikal kar wapas Outstanding me aa jayega.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Nahi')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Haan, wapas bhejo')),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    await context.read<CustomerStore>().setVoucher([c], false);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Wapas Outstanding me bhej diya')));
+      setState(() {});
+    }
   }
 
   // ------------------------------------------------------------ edit dialogs
@@ -179,7 +207,17 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(c.name.isEmpty ? 'Customer' : c.name)),
+      appBar: AppBar(
+        title: Text(c.name.isEmpty ? 'Customer' : c.name),
+        actions: [
+          if (c.inVoucher)
+            IconButton(
+              icon: const Icon(Icons.undo),
+              tooltip: 'Voucher se wapas Outstanding me',
+              onPressed: () => _moveBackFromVoucher(context),
+            ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

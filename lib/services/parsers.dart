@@ -1,6 +1,7 @@
 /// Pure parsing logic for QistBook's two print formats.
 /// No Flutter imports here — unit-testable, and mirrored by
 /// tool/validate_parser.py for cross-checking against your real prints.
+library;
 
 import '../models/customer.dart';
 

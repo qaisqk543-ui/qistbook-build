@@ -1,5 +1,6 @@
 /// QistBook ke payment accounts: JazzCash / Easypaisa / Bank.
 /// Ye numbers auto-sent SMS aur WhatsApp reminders me share hote hain.
+library;
 
 class PaymentAccount {
   String id;

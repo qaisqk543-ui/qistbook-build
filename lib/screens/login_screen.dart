@@ -1,6 +1,7 @@
 /// Login: phone-number OTP or email. One account per phone/email is
 /// enforced by Firebase Auth itself. On success the AuthGate in main.dart
 /// switches to the app automatically.
+library;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';

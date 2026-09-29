@@ -2,6 +2,7 @@
 /// WhatsApp has no free auto-send API — fully automatic sending would violate
 /// WhatsApp's terms and risk a number ban. So WhatsApp is "one tap":
 /// the chat opens with the message pre-filled, the user presses send.
+library;
 
 import 'package:telephony/telephony.dart';
 import 'package:url_launcher/url_launcher.dart';

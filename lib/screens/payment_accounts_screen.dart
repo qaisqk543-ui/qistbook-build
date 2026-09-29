@@ -1,5 +1,6 @@
 /// Payment Accounts: JazzCash / Easypaisa / Bank accounts.
 /// Ye numbers auto-sent SMS aur WhatsApp reminders me share hote hain.
+library;
 
 import 'package:flutter/material.dart';
 
@@ -49,7 +50,7 @@ class _PaymentAccountsScreenState
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
-                value: type,
+                initialValue: type,
                 decoration: const InputDecoration(
                   labelText: 'Type',
                   border: OutlineInputBorder(),

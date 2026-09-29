@@ -1,6 +1,7 @@
 /// Data models for QistBook.
 /// A Customer is keyed by [accountNo] (the "A/C No." on your prints) —
 /// that is the link between the detail statement and the outstanding report.
+library;
 
 enum AccountStatus {
   /// In the latest outstanding list, or newly created.
@@ -85,6 +86,45 @@ class CollectionEntry {
       );
 }
 
+/// One received payment entry (full or partial). Shown in the Received tab;
+/// undoing it adds the amount back to the customer's due + balance.
+class ReceivedPayment {
+  final String id; // unique: '<accountNo>-<millis>'
+  final String accountNo;
+  final String customerName;
+  final double amount;
+  final String method; // Cash | JazzCash | Easypaisa | Bank
+  final String date; // yyyy-MM-dd
+
+  ReceivedPayment({
+    required this.id,
+    required this.accountNo,
+    this.customerName = '',
+    this.amount = 0,
+    this.method = 'Cash',
+    this.date = '',
+  });
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'accountNo': accountNo,
+        'customerName': customerName,
+        'amount': amount,
+        'method': method,
+        'date': date,
+      };
+
+  factory ReceivedPayment.fromMap(Map<String, dynamic> m) =>
+      ReceivedPayment(
+        id: (m['id'] ?? '').toString(),
+        accountNo: (m['accountNo'] ?? '').toString(),
+        customerName: (m['customerName'] ?? '').toString(),
+        amount: _num(m['amount']),
+        method: (m['method'] ?? 'Cash').toString(),
+        date: (m['date'] ?? '').toString(),
+      );
+}
+
 double _num(dynamic v) {
   if (v is num) return v.toDouble();
   if (v is String) {
@@ -148,6 +188,10 @@ class Customer {
   String lastCollectedDate; // yyyy-MM-dd
   String lastCollectedMethod; // Cash | JazzCash | Easypaisa | Bank
 
+  /// Voucher category: customer moved out of Outstanding into the Voucher
+  /// tab via multi-select. Leaves Voucher only when currentDue reaches 0.
+  bool inVoucher;
+
   List<Guarantor> guarantors;
   List<CollectionEntry> collections;
 
@@ -200,6 +244,7 @@ class Customer {
     this.lastCollectedAmount = 0,
     this.lastCollectedDate = '',
     this.lastCollectedMethod = '',
+    this.inVoucher = false,
     List<Guarantor>? guarantors,
     List<CollectionEntry>? collections,
     List<ExtraContact>? extraContacts,
@@ -259,6 +304,7 @@ class Customer {
         'lastCollectedAmount': lastCollectedAmount,
         'lastCollectedDate': lastCollectedDate,
         'lastCollectedMethod': lastCollectedMethod,
+        'inVoucher': inVoucher ? 1 : 0,
         'guarantors': guarantors.map((g) => g.toMap()).toList(),
         'collections': collections.map((c) => c.toMap()).toList(),
         'extraContacts':
@@ -314,6 +360,7 @@ class Customer {
         lastCollectedDate: (m['lastCollectedDate'] ?? '').toString(),
         lastCollectedMethod:
             (m['lastCollectedMethod'] ?? '').toString(),
+        inVoucher: (m['inVoucher'] ?? 0) == 1,
         guarantors: ((m['guarantors'] as List?) ?? [])
             .map((e) => Guarantor.fromMap(Map<String, dynamic>.from(e as Map)))
             .toList(),

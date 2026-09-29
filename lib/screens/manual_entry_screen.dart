@@ -1,6 +1,7 @@
 /// Manual feeding — AAKHRI option.
 /// Pehle PDF, phir scan; agar scan na ho ya koi masla aaye to yahan
 /// haath se likh kar record update/create karen.
+library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

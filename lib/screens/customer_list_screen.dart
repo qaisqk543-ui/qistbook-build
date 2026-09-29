@@ -1,6 +1,7 @@
 /// Customer list: the "key fields up front" screen.
 /// Each row shows name, cell/WhatsApp, monthly installment, current due,
 /// balance + a status dot. Tap for details, tap icons to call / WhatsApp.
+library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -73,7 +74,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
   Widget _row(BuildContext context, Customer c) {
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: _statusColor(c).withOpacity(0.2),
+        backgroundColor: _statusColor(c).withValues(alpha: 0.2),
         child: Text(
           c.name.isEmpty ? '?' : c.name[0].toUpperCase(),
           style: TextStyle(
@@ -90,7 +91,7 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
             padding:
                 const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
-              color: _statusColor(c).withOpacity(0.15),
+              color: _statusColor(c).withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(_statusLabel(c),

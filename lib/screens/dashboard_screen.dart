@@ -1,5 +1,6 @@
 /// Dashboard: total outstanding, total due, cleared count,
 /// and per-officer breakdown (matches the grouped sections on your print).
+library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

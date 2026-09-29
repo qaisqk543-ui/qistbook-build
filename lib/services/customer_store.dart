@@ -19,6 +19,7 @@ import 'parsers.dart';
 class CustomerStore extends ChangeNotifier {
   Database? _db;
   final List<Customer> _customers = [];
+  final List<ReceivedPayment> _payments = [];
   String? _uid;
 
   /// When the data was last refreshed by an import (shown in the UI so the
@@ -71,6 +72,27 @@ class CustomerStore extends ChangeNotifier {
   List<Customer> get cleared =>
       _customers.where((c) => c.status == AccountStatus.cleared).toList();
 
+  /// Outstanding tab: pending dues, NOT in voucher. A customer stays here
+  /// while currentDue > 0 — even Rs 1 left keeps them listed.
+  List<Customer> get outstanding => _customers
+      .where((c) =>
+          c.status != AccountStatus.cleared &&
+          !c.inVoucher &&
+          c.currentDue > 0)
+      .toList();
+
+  /// Voucher tab: voucher-category customers with pending dues.
+  List<Customer> get voucherList => _customers
+      .where((c) => c.inVoucher && c.currentDue > 0)
+      .toList();
+
+  /// All received payment entries (full + partial), newest first.
+  List<ReceivedPayment> get receivedPayments =>
+      List.unmodifiable(_payments);
+
+  double get totalReceived =>
+      _payments.fold(0.0, (s, p) => s + p.amount);
+
   double get totalOutstanding =>
       active.fold(0, (s, c) => s + c.balance);
   double get totalDue => active.fold(0, (s, c) => s + c.currentDue);
@@ -100,6 +122,42 @@ class CustomerStore extends ChangeNotifier {
       _customers.add(Customer.fromMap(
           jsonDecode(r['data'] as String) as Map<String, dynamic>));
     }
+    // Received-payment entries live in their own table (works for old DBs
+    // too — IF NOT EXISTS).
+    await _db!.execute(
+        'CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY, data TEXT)');
+    final prows = await _db!.query('payments');
+    _payments.clear();
+    for (final r in prows) {
+      _payments.add(ReceivedPayment.fromMap(
+          jsonDecode(r['data'] as String) as Map<String, dynamic>));
+    }
+    // One-time migration: old "collectedLocally" flags (v1.0.6 and before)
+    // become real payment entries so Received history is not lost.
+    final migrated = <ReceivedPayment>[];
+    for (final c in _customers) {
+      if (c.collectedLocally) {
+        migrated.add(ReceivedPayment(
+          id: '${c.accountNo}-migrated',
+          accountNo: c.accountNo,
+          customerName: c.name,
+          amount: c.lastCollectedAmount,
+          method: c.lastCollectedMethod.isEmpty
+              ? 'Cash'
+              : c.lastCollectedMethod,
+          date: c.lastCollectedDate.isEmpty
+              ? DateTime.now().toIso8601String().substring(0, 10)
+              : c.lastCollectedDate,
+        ));
+        c.collectedLocally = false;
+        await _persistLocal(c);
+      }
+    }
+    for (final p in migrated) {
+      _payments.add(p);
+      await _persistPayment(p);
+    }
+    _sortPayments();
     // Demo mode (no Firebase configured): seed the 5 real sample rows so the
     // UI can be checked immediately. Real Firebase setups start empty.
     if (_customers.isEmpty && !FirebaseService.enabled) {
@@ -444,23 +502,81 @@ class CustomerStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Mark a customer's installment as collected (moves Outstanding -> Received).
-  Future<void> markCollected(
-      Customer c, double amount, String method) async {
-    c.collectedLocally = true;
-    c.lastCollectedAmount = amount;
+  void _sortPayments() {
+    _payments.sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  Future<void> _persistPayment(ReceivedPayment p) async {
+    await _db?.insert(
+      'payments',
+      {
+        'id': p.id,
+        'data': jsonEncode(p.toMap()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Collect a (possibly partial) payment: records a ReceivedPayment entry
+  /// and reduces the customer's currentDue + balance.
+  /// The customer stays in Outstanding/Voucher while currentDue > 0 —
+  /// only an exact 0 removes them from the list.
+  /// Returns false when the amount is invalid (0 < amount <= currentDue).
+  Future<bool> collectPayment(
+    Customer c, {
+    required double amount,
+    required String method,
+    required String date,
+  }) async {
+    if (amount <= 0 || amount > c.currentDue + 0.001) return false;
+    final pay = amount > c.currentDue ? c.currentDue : amount;
+    final entry = ReceivedPayment(
+      id: '${c.accountNo}-${DateTime.now().millisecondsSinceEpoch}',
+      accountNo: c.accountNo,
+      customerName: c.name,
+      amount: pay,
+      method: method,
+      date: date,
+    );
+    _payments.add(entry);
+    await _persistPayment(entry);
+    c.currentDue = c.currentDue - pay;
+    if (c.currentDue < 0.005) c.currentDue = 0;
+    c.balance = c.balance - pay;
+    if (c.balance < 0) c.balance = 0;
+    c.lastCollectedAmount = pay;
     c.lastCollectedMethod = method;
-    c.lastCollectedDate =
-        DateTime.now().toIso8601String().substring(0, 10);
+    c.lastCollectedDate = date;
     await _persist(c);
     _sort();
+    _sortPayments();
+    notifyListeners();
+    return true;
+  }
+
+  /// Undo one received payment: the entry is removed and the amount is
+  /// added back to the customer's currentDue + balance. The customer
+  /// automatically reappears in Outstanding (or Voucher, if inVoucher).
+  Future<void> undoPayment(ReceivedPayment p) async {
+    _payments.removeWhere((e) => e.id == p.id);
+    await _db?.delete('payments', where: 'id = ?', whereArgs: [p.id]);
+    final c = findByAccountNo(p.accountNo);
+    if (c != null) {
+      c.currentDue = c.currentDue + p.amount;
+      c.balance = c.balance + p.amount;
+      await _persist(c);
+    }
+    _sort();
+    _sortPayments();
     notifyListeners();
   }
 
-  /// Undo a local collection (moves Received -> Outstanding).
-  Future<void> undoCollected(Customer c) async {
-    c.collectedLocally = false;
-    await _persist(c);
+  /// Move customers into/out of the Voucher category.
+  Future<void> setVoucher(List<Customer> list, bool value) async {
+    for (final c in list) {
+      c.inVoucher = value;
+      await _persist(c);
+    }
     _sort();
     notifyListeners();
   }

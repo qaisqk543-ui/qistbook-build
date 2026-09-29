@@ -5,6 +5,7 @@
 ///    ONLY to that user (see firestore.rules). Local sqflite stays as the
 ///    offline cache; Firestore is the source of truth and syncs across the
 ///    user's devices.
+library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';

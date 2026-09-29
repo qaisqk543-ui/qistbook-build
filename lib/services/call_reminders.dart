@@ -1,6 +1,7 @@
 /// Scheduled call reminders: pick a time on the Outstanding screen, get a
 /// high-priority notification at that time, tap it and the app shows the
 /// customer with SIM Call / WhatsApp / SMS / Delay actions.
+library;
 
 import 'dart:convert';
 
@@ -111,14 +112,22 @@ class CallReminderService {
   /// (today if still ahead, otherwise tomorrow). Returns the actual time.
   static Future<DateTime> scheduleReminder(
       Customer c, TimeOfDay time) async {
-    await init();
     final now = DateTime.now();
     var scheduled =
         DateTime(now.year, now.month, now.day, time.hour, time.minute);
     if (!scheduled.isAfter(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
-    final tzScheduled = tz.TZDateTime.from(scheduled, tz.local);
+    return (await scheduleReminderAt(c, scheduled)) ?? scheduled;
+  }
+
+  /// Schedule a call reminder at an exact [when] (Asia/Karachi wall clock).
+  /// Returns null (and schedules nothing) when [when] is not in the future.
+  static Future<DateTime?> scheduleReminderAt(
+      Customer c, DateTime when) async {
+    await init();
+    if (!when.isAfter(DateTime.now())) return null;
+    final tzScheduled = tz.TZDateTime.from(when, tz.local);
     const androidDetails = AndroidNotificationDetails(
       _channelId,
       _channelName,
@@ -137,8 +146,8 @@ class CallReminderService {
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       payload: c.accountNo,
     );
-    await _saveReminder(c, scheduled);
-    return scheduled;
+    await _saveReminder(c, when);
+    return when;
   }
 
   static Future<void> cancelReminder(String accountNo) async {
@@ -241,6 +250,7 @@ class ReminderDialog extends StatelessWidget {
           label: const Text('SIM Call'),
           onPressed: () async {
             await dialNumber(c.cell);
+            if (!context.mounted) return;
             await _done(context);
           },
         ),
@@ -256,6 +266,7 @@ class ReminderDialog extends StatelessWidget {
                     content: Text('WhatsApp nahi khul saka')),
               );
             }
+            if (!context.mounted) return;
             await _done(context);
           },
         ),
@@ -273,6 +284,7 @@ class ReminderDialog extends StatelessWidget {
                         : 'SMS nahi bheja ja saka — permission check karo')),
               );
             }
+            if (!context.mounted) return;
             await _done(context);
           },
         ),

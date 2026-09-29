@@ -5,9 +5,9 @@
 ///
 /// Phir: OCR (on-device ML Kit) → parse → REVIEW screen → Confirm & Save.
 /// Save karte hi data foran update + cloud sync.
+library;
 
 import 'dart:io';
-import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -60,7 +60,7 @@ class _ImportScreenState extends State<ImportScreen> {
         for (final line in block.lines) {
           final box = line.boundingBox;
           lines.add(_Line(line.text,
-              top: box?.top ?? 0, left: box?.left ?? 0));
+              top: box.top, left: box.left));
         }
       }
       lines.sort((a, b) {

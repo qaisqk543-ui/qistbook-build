@@ -1,5 +1,6 @@
 /// Payment accounts storage (JazzCash / Easypaisa / Bank).
 /// SharedPreferences me JSON list — offline, sirf is phone par.
+library;
 
 import 'dart:convert';
 

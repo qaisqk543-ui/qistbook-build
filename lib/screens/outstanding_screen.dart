@@ -1,7 +1,13 @@
 /// Outstanding screen: ONLY the customers whose installments are pending.
 /// - Upload a fresh outstanding report → paid-up names disappear until the
 ///   next month's list brings them back (if they still owe).
-/// - Read-only: no manual edits; data changes only through imports.
+/// - Collect opens amount + method + date dialog; partial payments reduce
+///   the due — the customer stays listed while currentDue > 0.
+/// - Long-press rows to multi-select and move customers into the Voucher
+///   category.
+/// Reused for the Voucher tab via [voucherMode] (same pattern, voucher
+/// customers only, no multi-select).
+library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -15,7 +21,8 @@ import 'customer_detail_screen.dart';
 import 'import_screen.dart';
 
 class OutstandingScreen extends StatefulWidget {
-  const OutstandingScreen({super.key});
+  final bool voucherMode;
+  const OutstandingScreen({super.key, this.voucherMode = false});
 
   @override
   State<OutstandingScreen> createState() => _OutstandingScreenState();
@@ -23,6 +30,9 @@ class OutstandingScreen extends StatefulWidget {
 
 class _OutstandingScreenState extends State<OutstandingScreen> {
   String _officer = 'All';
+  final Set<String> _selected = {};
+
+  bool get _selecting => _selected.isNotEmpty;
 
   String _rs(double v) =>
       'Rs ${v.toStringAsFixed(0).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}';
@@ -37,25 +47,24 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
     if (h == 0) h = 12;
     final m = t.minute.toString().padLeft(2, '0');
     final ap = t.hour < 12 ? 'AM' : 'PM';
-    return '$d-${months[t.month - 1]} ${h}:$m $ap';
+    return '$d-${months[t.month - 1]} $h:$m $ap';
   }
+
+  String _fmtDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<CustomerStore>();
-    final pending = store.customers
-        .where((c) =>
-            c.status != AccountStatus.cleared &&
-            !c.collectedLocally &&
-            (c.currentDue > 0 || c.balance > 0))
-        .toList();
+    final base =
+        widget.voucherMode ? store.voucherList : store.outstanding;
     final officers = <String>[
       'All',
-      ...store.byOfficer.keys,
+      ...{for (final c in base) c.officer.isEmpty ? '—' : c.officer},
     ];
     final list = _officer == 'All'
-        ? pending
-        : pending
+        ? base
+        : base
             .where((c) =>
                 (c.officer.isEmpty ? '—' : c.officer) == _officer)
             .toList();
@@ -63,27 +72,46 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
         list.fold(0.0, (s, c) => s + c.balance);
     final totalPayable =
         list.fold(0.0, (s, c) => s + c.currentDue);
+    final title = widget.voucherMode ? 'Voucher' : 'Outstanding';
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Outstanding'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.upload_file),
-            tooltip: 'Upload outstanding report',
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const ImportScreen())),
-          ),
-        ],
+        title: Text(
+            _selecting ? '${_selected.length} selected' : title),
+        actions: _selecting
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.check),
+                  tooltip: 'Voucher me dalo',
+                  onPressed: () => _moveToVoucher(context, store),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Cancel',
+                  onPressed: () =>
+                      setState(() => _selected.clear()),
+                ),
+              ]
+            : [
+                IconButton(
+                  icon: const Icon(Icons.upload_file),
+                  tooltip: 'Upload outstanding report',
+                  onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              const ImportScreen())),
+                ),
+              ],
       ),
       body: Column(
         children: [
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
-            color: Colors.red.shade50,
+            color: widget.voucherMode
+                ? Colors.amber.shade50
+                : Colors.red.shade50,
             child: Column(
               children: [
                 Row(
@@ -132,16 +160,19 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
             ),
           Expanded(
             child: list.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
-                        'All clear! No pending installments.',
-                        style: TextStyle(fontSize: 16)))
+                        widget.voucherMode
+                            ? 'Voucher khaali hai.\nOutstanding me long-press karke customers yahan lao.'
+                            : 'All clear! No pending installments.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 16)))
                 : ListView.separated(
                     itemCount: list.length,
                     separatorBuilder: (_, __) =>
                         const Divider(height: 1),
                     itemBuilder: (context, i) =>
-                        _row(context, list[i]),
+                        _row(context, store, list[i]),
                   ),
           ),
         ],
@@ -160,8 +191,58 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
     );
   }
 
-  Widget _row(BuildContext context, Customer c) {
+  void _toggleSelect(Customer c) {
+    setState(() {
+      if (_selected.contains(c.accountNo)) {
+        _selected.remove(c.accountNo);
+      } else {
+        _selected.add(c.accountNo);
+      }
+    });
+  }
+
+  Future<void> _moveToVoucher(
+      BuildContext context, CustomerStore store) async {
+    final count = _selected.length;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Voucher me dalo?'),
+        content: Text(
+            '$count customer Voucher category me chale jayenge (Outstanding se nikal jayenge).'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Nahi')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Haan, dalo')),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    final moving = store.outstanding
+        .where((c) => _selected.contains(c.accountNo))
+        .toList();
+    await store.setVoucher(moving, true);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$count customer Voucher me daal diye')));
+      setState(() => _selected.clear());
+    }
+  }
+
+  Widget _row(
+      BuildContext context, CustomerStore store, Customer c) {
+    final selected = _selected.contains(c.accountNo);
     return ListTile(
+      leading: _selecting
+          ? Checkbox(
+              value: selected,
+              onChanged: (_) => _toggleSelect(c),
+            )
+          : null,
+      selected: selected,
       title: Text(c.name.isEmpty ? '(no name)' : c.name,
           style: const TextStyle(fontWeight: FontWeight.w600)),
       subtitle: Text(
@@ -173,7 +254,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
           IconButton(
             icon: const Icon(Icons.payments, color: Colors.teal),
             tooltip: 'Collect',
-            onPressed: () => _collectTap(context, c),
+            onPressed: () => _collectTap(context, store, c),
           ),
           FutureBuilder<bool>(
             future: CallReminderService.hasReminder(c.accountNo),
@@ -212,20 +293,18 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
           ),
         ],
       ),
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => CustomerDetailScreen(customer: c)),
-      ),
+      onLongPress: widget.voucherMode
+          ? null
+          : () => setState(() => _selected.add(c.accountNo)),
+      onTap: _selecting
+          ? () => _toggleSelect(c)
+          : () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) =>
+                        CustomerDetailScreen(customer: c)),
+              ),
     );
-  }
-
-  String _fmtTimeOfDay(TimeOfDay t) {
-    var h = t.hour % 12;
-    if (h == 0) h = 12;
-    final m = t.minute.toString().padLeft(2, '0');
-    final ap = t.hour < 12 ? 'AM' : 'PM';
-    return '$h:$m $ap';
   }
 
   String _fmtReminderTime(DateTime t) {
@@ -242,6 +321,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
   }
 
   /// Alarm icon tap: set / change / cancel a call reminder for [c].
+  /// Date picker first, then time picker; past datetimes are rejected.
   Future<void> _reminderTap(BuildContext context, Customer c) async {
     final existing =
         await CallReminderService.getReminderTime(c.accountNo);
@@ -278,17 +358,38 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       if (action != 'change') return;
     }
     if (!context.mounted) return;
-    final picked = await showTimePicker(
+    final date = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      helpText: 'Reminder ki date chuno',
+    );
+    if (date == null || !context.mounted) return;
+    final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.now(),
+      helpText: 'Reminder ka time chuno',
     );
-    if (picked == null || !context.mounted) return;
+    if (time == null || !context.mounted) return;
+    final when = DateTime(
+        date.year, date.month, date.day, time.hour, time.minute);
+    if (!when.isAfter(DateTime.now())) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'Ye waqt guzar chuka hai — aage ki date/time chuno')),
+        );
+      }
+      return;
+    }
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(c.name.isEmpty ? '(no name)' : c.name),
         content: Text(
-            '${_fmtTimeOfDay(picked)} par call reminder lagana hai?'),
+            '${_fmtReminderTime(when)} par call reminder lagana hai?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -300,80 +401,147 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       ),
     );
     if (confirm != true || !context.mounted) return;
-    final when =
-        await CallReminderService.scheduleReminder(c, picked);
+    final scheduled =
+        await CallReminderService.scheduleReminderAt(c, when);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:
-              Text('Reminder lag gaya: ${_fmtReminderTime(when)}')));
-      setState(() {});
+      if (scheduled == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'Ye waqt guzar chuka hai — aage ki date/time chuno')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'Reminder lag gaya: ${_fmtReminderTime(scheduled)}')));
+        setState(() {});
+      }
     }
   }
 
-  /// Collect button tap: amount + method dialog, then move to Received.
-  Future<void> _collectTap(BuildContext context, Customer c) async {
-    final store = context.read<CustomerStore>();
+  /// Collect button tap: amount + method + date dialog, then record the
+  /// payment. Partial payments just reduce the due; the customer leaves
+  /// the list only when the due reaches exactly 0.
+  Future<void> _collectTap(
+      BuildContext context, CustomerStore store, Customer c) async {
     final amountCtrl = TextEditingController(
         text: c.currentDue > 0
             ? c.currentDue.toStringAsFixed(0)
             : c.monthlyInstallment.toStringAsFixed(0));
     String method = 'Cash';
+    DateTime payDate = DateTime.now();
+    String? err;
     const methods = ['Cash', 'JazzCash', 'Easypaisa', 'Bank'];
+    double amount = 0;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dctx) => StatefulBuilder(
         builder: (dctx, setD) => AlertDialog(
           title: Text(c.name.isEmpty ? '(no name)' : c.name),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('A/C ${c.accountNo}  •  Due ${_rs(c.currentDue)}'),
-              const SizedBox(height: 12),
-              TextField(
-                controller: amountCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Received amount (Rs)',
-                  border: OutlineInputBorder(),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    'A/C ${c.accountNo}  •  Due ${_rs(c.currentDue)}'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(
+                          decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Received amount (Rs)',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: method,
-                decoration: const InputDecoration(
-                  labelText: 'Method',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: method,
+                  decoration: const InputDecoration(
+                    labelText: 'Method',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: methods
+                      .map((m) => DropdownMenuItem(
+                          value: m, child: Text(m)))
+                      .toList(),
+                  onChanged: (v) => setD(() => method = v ?? 'Cash'),
                 ),
-                items: methods
-                    .map((m) =>
-                        DropdownMenuItem(value: m, child: Text(m)))
-                    .toList(),
-                onChanged: (v) => setD(() => method = v ?? 'Cash'),
-              ),
-            ],
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                        child:
+                            Text('Date: ${_fmtDate(payDate)}')),
+                    TextButton(
+                      onPressed: () async {
+                        final d = await showDatePicker(
+                          context: dctx,
+                          initialDate: payDate,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now().add(
+                              const Duration(days: 365)),
+                        );
+                        if (d != null) {
+                          setD(() => payDate = d);
+                        }
+                      },
+                      child: const Text('Badlo'),
+                    ),
+                  ],
+                ),
+                if (err != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(err!,
+                        style: const TextStyle(
+                            color: Colors.red, fontSize: 13)),
+                  ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(dctx, false),
                 child: const Text('Cancel')),
             TextButton(
-                onPressed: () => Navigator.pop(dctx, true),
-                child: const Text('Confirm')),
+              onPressed: () {
+                final v = double.tryParse(amountCtrl.text
+                        .replaceAll(',', '')
+                        .trim()) ??
+                    0;
+                if (v <= 0) {
+                  setD(() => err = 'Raqam 0 se zyada likho');
+                  return;
+                }
+                if (v > c.currentDue + 0.001) {
+                  setD(() => err =
+                      'Raqam due (${_rs(c.currentDue)}) se zyada nahi ho sakti');
+                  return;
+                }
+                amount = v;
+                Navigator.pop(dctx, true);
+              },
+              child: const Text('Confirm'),
+            ),
           ],
         ),
       ),
     );
     if (confirm != true || !context.mounted) return;
-    final amount =
-        double.tryParse(amountCtrl.text.replaceAll(',', '').trim()) ??
-            c.currentDue;
-    await store.markCollected(c, amount, method);
+    final ok = await store.collectPayment(c,
+        amount: amount, method: method, date: _fmtDate(payDate));
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              'Rs ${amount.toStringAsFixed(0)} received ($method)')));
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                '${_rs(amount)} received ($method) — Baqi due: ${_rs(c.currentDue)}')));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Raqam ghalat hai — dobara koshish karo')));
+      }
       setState(() {});
     }
   }
