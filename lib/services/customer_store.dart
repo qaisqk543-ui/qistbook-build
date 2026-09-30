@@ -1,26 +1,29 @@
-/// Local-first storage for QistBook (sqflite) + ChangeNotifier store.
+/// Local-first storage for QistBook (JSON file) + ChangeNotifier store.
 ///
-/// PER-USER: har login user ka apna database file hota hai: qistbook_<uid>.db
-/// Firestore (per-user, private) optional cloud sync hai; sqflite offline
+/// PER-USER: har login user ka apna data file hota hai: qistbook_<uid>.json
+/// (app documents directory me). SQLite se is liye hata diya kyunke kuch
+/// phones par openDatabase atak jata tha — JSON file me koi lock nahi,
+/// koi native code nahi, kabhi nahi atakti.
+/// Firestore (per-user, private) optional cloud sync hai; JSON file offline
 /// cache + primary store hai.
 ///
-/// Vouchers: entries-based (table `vouchers`) — ek customer ke kayi vouchers
-/// ho sakte hain, har ek ki date + amount history me rehti hai. Vouchered
-/// customers monthly rollover me FROZEN hote hain (unki due khud nahi badalti).
+/// Vouchers: entries-based — ek customer ke kayi vouchers ho sakte hain,
+/// har ek ki date + amount history me rehti hai. Vouchered customers monthly
+/// rollover me FROZEN hote hain (unki due khud nahi badalti).
 library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart';
 
 import '../models/customer.dart';
 import '../theme/app_theme.dart' show monthKey, isoDate;
-import 'auth_service.dart';
 import 'error_log.dart';
 import 'firebase_service.dart';
 import 'parsers.dart';
@@ -44,15 +47,14 @@ class VoucherGroup {
 }
 
 class CustomerStore extends ChangeNotifier {
-  Database? _db;
   final List<Customer> _customers = [];
   final List<ReceivedPayment> _payments = [];
   final List<VoucherEntry> _vouchers = [];
   String? _uid;
   String? get uid => _uid;
 
-  /// Safe mode = asal data file khul nahi saki, app memory me kholi hai
-  /// taake kaam ruke nahi. Banner me "Dobara koshish karein" hota hai.
+  /// Safe mode ab JSON ki wajah se zaroori nahi — hamesha false.
+  /// (Purane code se compatibility ke liye rakha hai.)
   bool safeMode = false;
 
   /// When the data was last refreshed by an import (shown in the UI so the
@@ -177,45 +179,13 @@ class CustomerStore extends ChangeNotifier {
     return map;
   }
 
-  /// Open (or create) this user's database.
-  Future<void> init(String uid,
-      {bool inMemory = false,
-      bool safeModeFile = false,
-      void Function(String)? onStep}) async {
+  /// Open (or create) this user's data file (JSON — kabhi nahi atakti).
+  Future<void> init(String uid, {void Function(String)? onStep}) async {
     _uid = uid;
-    // Safe mode: asal file khul nahi saki to alag safe file (ya memory) me
-    // kholo — asal file ko haath lagaye baghair taake data mehfooz rahe.
-    safeMode = inMemory || safeModeFile;
+    safeMode = false;
     onStep?.call('Data file khol rahe hain…');
-    final String dbPath;
-    if (inMemory) {
-      dbPath = inMemoryDatabasePath;
-    } else if (safeModeFile) {
-      // Alag naam ki file — is par kabhi lock nahi hota, foran khulti hai.
-      dbPath = p.join(await getDatabasesPath(), 'qistbook_${uid}_safe.db');
-    } else {
-      dbPath = p.join(await getDatabasesPath(), AuthService.userDbName(uid));
-    }
-    _db = await openDatabase(
-      dbPath,
-      version: 2,
-      onCreate: (db, _) async {
-        await db.execute(
-            'CREATE TABLE customers(account_no TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)');
-        await db.execute(
-            'CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY, data TEXT)');
-        await db.execute(
-            'CREATE TABLE IF NOT EXISTS vouchers(id TEXT PRIMARY KEY, data TEXT)');
-      },
-      onUpgrade: (db, oldV, _) async {
-        if (oldV < 2) {
-          await db.execute(
-              'CREATE TABLE IF NOT EXISTS vouchers(id TEXT PRIMARY KEY, data TEXT)');
-        }
-      },
-    );
-    onStep?.call('Data parh rahe hain…');
     await _loadAll();
+    onStep?.call('Data parh rahe hain…');
     // Demo mode (no Firebase configured): seed the 5 real sample rows so the
     // UI can be checked immediately. Real Firebase setups start empty.
     if (_customers.isEmpty && !FirebaseService.enabled) {
@@ -232,63 +202,71 @@ class CustomerStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// DB connection band karo (restore / reset se pehle zaroori).
-  Future<void> closeDb() async {
-    try {
-      await _db?.close();
-    } catch (_) {}
-    _db = null;
+  /// Is user ki JSON data file (app documents directory me).
+  Future<File> _dataFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File(p.join(dir.path, 'qistbook_$_uid.json'));
   }
 
-  /// Safe mode se asal data file dobara kholne ki koshish.
-  /// Kamyab ho to safeMode=false, na ho to wapas safe mode. Kabhi throw nahi karta.
-  Future<bool> retryRealDb() async {
+  /// Saara data ek hi JSON file me save karo. Har tabdeeli ke baad call hoti
+  /// hai — file chhoti hai (chand sau KB), likhna milliseconds me hota hai.
+  Future<void> _saveToFile() async {
     final u = _uid;
-    if (u == null) return false;
+    if (u == null) return;
     try {
-      await closeDb();
-    } catch (_) {}
-    try {
-      await init(u).timeout(const Duration(seconds: 25));
-      return !safeMode;
+      final file = await _dataFile();
+      final data = {
+        'customers': _customers.map((c) => c.toMap()).toList(),
+        'payments': _payments.map((e) => e.toMap()).toList(),
+        'vouchers': _vouchers.map((e) => e.toMap()).toList(),
+      };
+      await file.writeAsString(jsonEncode(data));
     } catch (e) {
-      ErrorLog.log('SafeMode', e);
-      try {
-        await closeDb();
-      } catch (_) {}
-      try {
-        await init(u, inMemory: true);
-      } catch (_) {}
-      return false;
+      ErrorLog.log('JSON save', e);
     }
   }
 
-  /// Load everything from the user's DB + run idempotent migrations.
+  /// DB connection band karo — JSON me koi connection nahi, kuch nahi karna.
+  Future<void> closeDb() async {}
+
+  /// Safe mode ab hai hi nahi (JSON kabhi nahi atakti) — hamesha true.
+  Future<bool> retryRealDb() async {
+    return true;
+  }
+
+  /// Load everything from the user's JSON file + run idempotent migrations.
   Future<void> _loadAll() async {
-    final rows = await _db!.query('customers');
     _customers.clear();
-    final rawMaps = <String, Map<String, dynamic>>{};
-    for (final r in rows) {
-      final m =
-          jsonDecode(r['data'] as String) as Map<String, dynamic>;
-      rawMaps[(r['account_no'] as String).toString()] = m;
-      _customers.add(Customer.fromMap(m));
-    }
-    await _db!.execute(
-        'CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY, data TEXT)');
-    final prows = await _db!.query('payments');
     _payments.clear();
-    for (final r in prows) {
-      _payments.add(ReceivedPayment.fromMap(
-          jsonDecode(r['data'] as String) as Map<String, dynamic>));
-    }
-    await _db!.execute(
-        'CREATE TABLE IF NOT EXISTS vouchers(id TEXT PRIMARY KEY, data TEXT)');
-    final vrows = await _db!.query('vouchers');
     _vouchers.clear();
-    for (final r in vrows) {
-      _vouchers.add(VoucherEntry.fromMap(
-          jsonDecode(r['data'] as String) as Map<String, dynamic>));
+    final rawMaps = <String, Map<String, dynamic>>{};
+    try {
+      final file = await _dataFile();
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        final data = jsonDecode(content) as Map<String, dynamic>;
+        for (final m in (data['customers'] as List? ?? [])) {
+          try {
+            final map = m as Map<String, dynamic>;
+            rawMaps[map['accountNo'].toString()] = map;
+            _customers.add(Customer.fromMap(map));
+          } catch (_) {}
+        }
+        for (final m in (data['payments'] as List? ?? [])) {
+          try {
+            _payments.add(ReceivedPayment.fromMap(
+                m as Map<String, dynamic>));
+          } catch (_) {}
+        }
+        for (final m in (data['vouchers'] as List? ?? [])) {
+          try {
+            _vouchers.add(VoucherEntry.fromMap(
+                m as Map<String, dynamic>));
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      ErrorLog.log('JSON load', e);
     }
     // One-time migration: old "collectedLocally" flags (v1.0.6 and before)
     // become real payment entries so Received history is not lost.
@@ -400,11 +378,7 @@ class CustomerStore extends ChangeNotifier {
   }
 
   Future<void> _persistVoucher(VoucherEntry v) async {
-    await _db?.insert(
-      'vouchers',
-      {'id': v.id, 'data': jsonEncode(v.toMap())},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await _saveToFile();
   }
 
   /// Voucher me naya entry add karo (ek customer ke kayi ho sakte hain).
@@ -418,7 +392,7 @@ class CustomerStore extends ChangeNotifier {
   /// Ek voucher entry delete karo (confirm dialog UI me hota hai).
   Future<void> deleteVoucherEntry(String id) async {
     _vouchers.removeWhere((e) => e.id == id);
-    await _db?.delete('vouchers', where: 'id = ?', whereArgs: [id]);
+    await _saveToFile();
     _sortVouchers();
     notifyListeners();
   }
@@ -426,14 +400,8 @@ class CustomerStore extends ChangeNotifier {
   /// "Voucher se wapas": is account ki saari entries hatao → customer
   /// Voucher tab se nikal kar (due > 0 ho to) Outstanding me wapas aayega.
   Future<void> clearVouchersFor(String accountNo) async {
-    final ids = _vouchers
-        .where((e) => e.accountNo == accountNo)
-        .map((e) => e.id)
-        .toList();
     _vouchers.removeWhere((e) => e.accountNo == accountNo);
-    for (final id in ids) {
-      await _db?.delete('vouchers', where: 'id = ?', whereArgs: [id]);
-    }
+    await _saveToFile();
     notifyListeners();
   }
 
@@ -444,14 +412,7 @@ class CustomerStore extends ChangeNotifier {
   }
 
   Future<void> _persistPayment(ReceivedPayment p) async {
-    await _db?.insert(
-      'payments',
-      {
-        'id': p.id,
-        'data': jsonEncode(p.toMap()),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await _saveToFile();
   }
 
   /// Collect a (possibly partial) payment: records a ReceivedPayment entry
@@ -497,7 +458,7 @@ class CustomerStore extends ChangeNotifier {
   /// automatically reappears in Outstanding (or stays in Voucher if entries exist).
   Future<void> undoPayment(ReceivedPayment p) async {
     _payments.removeWhere((e) => e.id == p.id);
-    await _db?.delete('payments', where: 'id = ?', whereArgs: [p.id]);
+    await _saveToFile();
     final c = findByAccountNo(p.accountNo);
     if (c != null) {
       c.currentDue = c.currentDue + p.amount;
@@ -594,20 +555,12 @@ class CustomerStore extends ChangeNotifier {
   }
 
   Future<void> _persistLocal(Customer c) async {
-    await _db?.insert(
-      'customers',
-      {
-        'account_no': c.accountNo,
-        'data': jsonEncode(c.toMap()),
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await _saveToFile();
   }
 
   /// Local write + cloud push (sirf jab sync mumkin ho; offline sab local).
   Future<void> _persist(Customer c) async {
-    await _persistLocal(c);
+    await _saveToFile();
     final uid = _uid;
     if (uid == null) return;
     if (!await _canSync()) return;

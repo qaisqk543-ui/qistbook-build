@@ -5,14 +5,13 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
 
-import 'auth_service.dart';
 import 'backup_service.dart';
 import 'call_reminders.dart';
 import 'customer_store.dart';
@@ -127,23 +126,17 @@ class SelfRepair {
   }
 
   static Future<bool> _tablesExist(String uid) async {
-    Database? db;
     try {
-      final dir = await getDatabasesPath();
-      final f =
-          File(p.join(dir, AuthService.userDbName(uid)));
+      final dir = await getApplicationDocumentsDirectory();
+      final f = File(p.join(dir.path, 'qistbook_$uid.json'));
       if (!await f.exists()) return false;
-      db = await openDatabase(f.path, readOnly: true);
-      for (final t in ['customers', 'payments', 'vouchers']) {
-        final r = await db.rawQuery(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='$t'");
-        if (r.isEmpty) return false;
-      }
-      return true;
+      final content = await f.readAsString();
+      final data = jsonDecode(content) as Map<String, dynamic>;
+      return data.containsKey('customers') &&
+          data.containsKey('payments') &&
+          data.containsKey('vouchers');
     } catch (_) {
       return false;
-    } finally {
-      await db?.close();
     }
   }
 

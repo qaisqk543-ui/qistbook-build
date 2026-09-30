@@ -1,8 +1,9 @@
-/// Backup & Restore: user ki DB file ka backup (Downloads folder + share)
-/// aur restore (file picker se .db chuno → validate → replace).
+/// Backup & Restore: user ki JSON data file ka backup (Downloads folder + share)
+/// aur restore (file picker se .json chuno → validate → replace).
 /// Business data = livelihood, is liye sab kuch real aur mehfooz.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -10,9 +11,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart';
 
-import 'auth_service.dart';
 import 'error_log.dart';
 
 class BackupService {
@@ -26,18 +25,18 @@ class BackupService {
         : DateTime.fromMillisecondsSinceEpoch(ms);
   }
 
-  static Future<File> _userDbFile(String uid) async {
-    final dir = await getDatabasesPath();
-    return File(p.join(dir, AuthService.userDbName(uid)));
+  static Future<File> _userDataFile(String uid) async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File(p.join(dir.path, 'qistbook_$uid.json'));
   }
 
-  /// "Backup banao": DB copy karke Downloads me save + share option.
+  /// "Backup banao": JSON copy karke Downloads me save + share option.
   /// Returns backup file path, ya null agar fail.
   static Future<String?> makeBackup(String uid) async {
     try {
-      final src = await _userDbFile(uid);
+      final src = await _userDataFile(uid);
       if (!await src.exists()) {
-        ErrorLog.log('Backup', 'DB file nahi mili');
+        ErrorLog.log('Backup', 'Data file nahi mili');
         return null;
       }
       Directory? dl;
@@ -47,7 +46,7 @@ class BackupService {
       dl ??= await getApplicationDocumentsDirectory();
       final stamp = DateTime.now();
       final name =
-          'QistBook-Backup-${stamp.year}${stamp.month.toString().padLeft(2, '0')}${stamp.day.toString().padLeft(2, '0')}-${stamp.hour.toString().padLeft(2, '0')}${stamp.minute.toString().padLeft(2, '0')}.db';
+          'QistBook-Backup-${stamp.year}${stamp.month.toString().padLeft(2, '0')}${stamp.day.toString().padLeft(2, '0')}-${stamp.hour.toString().padLeft(2, '0')}${stamp.minute.toString().padLeft(2, '0')}.json';
       final dest = File(p.join(dl.path, name));
       await src.copy(dest.path);
       final prefs = await SharedPreferences.getInstance();
@@ -76,8 +75,8 @@ class BackupService {
     try {
       final res = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['db'],
-        dialogTitle: 'Backup file (.db) chuno',
+        allowedExtensions: ['json'],
+        dialogTitle: 'Backup file (.json) chuno',
       );
       if (res == null || res.files.single.path == null) return null;
       return File(res.files.single.path!);
@@ -87,35 +86,28 @@ class BackupService {
     }
   }
 
-  /// Kya ye file asli QistBook DB hai? (integrity + customers table check)
+  /// Kya ye file asli QistBook backup hai? (JSON structure check)
   static Future<bool> isValidBackup(File f) async {
-    Database? db;
     try {
-      db = await openDatabase(f.path, readOnly: true);
-      final chk = await db.rawQuery('PRAGMA integrity_check');
-      final ok = chk.isNotEmpty &&
-          (chk.first.values.first as String) == 'ok';
-      if (!ok) return false;
-      final tables = await db.rawQuery(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='customers'");
-      return tables.isNotEmpty;
+      final content = await f.readAsString();
+      final data = jsonDecode(content) as Map<String, dynamic>;
+      return data.containsKey('customers') &&
+          data.containsKey('payments') &&
+          data.containsKey('vouchers');
     } catch (e) {
       ErrorLog.log('Backup validate', e);
       return false;
-    } finally {
-      await db?.close();
     }
   }
 
-  /// Current user DB ko backup file se replace karo.
-  /// NOTE: caller ko pehle store ka DB band karna chahiye.
+  /// Current user data file ko backup file se replace karo.
   static Future<bool> restoreFrom(String uid, File backup) async {
     try {
-      final dest = await _userDbFile(uid);
+      final dest = await _userDataFile(uid);
       if (await dest.exists()) {
         final bak = File('${dest.path}.pre-restore');
         if (await bak.exists()) await bak.delete();
-        await dest.copy(bak.path); // safety: purani DB ki copy
+        await dest.copy(bak.path); // safety: purani file ki copy
       }
       await backup.copy(dest.path);
       return true;
@@ -125,23 +117,17 @@ class BackupService {
     }
   }
 
-  /// Database check: PRAGMA integrity_check. 'ok' ya error text.
+  /// Data file check: JSON valid hai? 'ok' ya error text.
   static Future<String> checkIntegrity(String uid) async {
-    Database? db;
     try {
-      final f = await _userDbFile(uid);
-      if (!await f.exists()) return 'DB file nahi mili';
-      db = await openDatabase(f.path, readOnly: true);
-      final chk = await db.rawQuery('PRAGMA integrity_check');
-      if (chk.isEmpty) return 'Check nahi ho saka';
-      return (chk.first.values.first as String).toLowerCase() == 'ok'
-          ? 'ok'
-          : chk.first.values.first as String;
+      final f = await _userDataFile(uid);
+      if (!await f.exists()) return 'Data file nahi mili';
+      final content = await f.readAsString();
+      jsonDecode(content);
+      return 'ok';
     } catch (e) {
-      ErrorLog.log('DB check', e);
+      ErrorLog.log('Data check', e);
       return 'Error: $e';
-    } finally {
-      await db?.close();
     }
   }
 
@@ -164,10 +150,10 @@ class BackupService {
     return n;
   }
 
-  /// App reset: user DB delete. Caller logout karke login screen par le jaye.
+  /// App reset: user data file delete. Caller logout karke login screen par le jaye.
   static Future<void> wipeUserData(String uid) async {
     try {
-      final f = await _userDbFile(uid);
+      final f = await _userDataFile(uid);
       if (await f.exists()) await f.delete();
       final prefs = await SharedPreferences.getInstance();
       for (final k in prefs.getKeys().where((k) => k.endsWith('_$uid'))) {
