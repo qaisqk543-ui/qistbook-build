@@ -109,7 +109,47 @@ class _KistBookAppState extends State<KistBookApp> {
   @override
   void initState() {
     super.initState();
-    _boot();
+    // v1.0.21+: KOI boot wait nahi — Home FORAN dikhegi.
+    // Default user + empty store synchronously banao (koi await nahi).
+    // Asli data background me load hoga.
+    final defaultUser = AppUser(
+      id: 'default-user',
+      name: 'Qais',
+      createdAt: DateTime.now().toIso8601String(),
+    );
+    _store = CustomerStore();
+    _access = AccessControl();
+    _loading = false;
+    // Background me asli setup karo (await nahi — UI block nahi hogi).
+    _backgroundBoot(defaultUser);
+  }
+
+  /// Background boot — UI ko kabhi block nahi karegi.
+  Future<void> _backgroundBoot(AppUser defaultUser) async {
+    try {
+      // Asli user dhoondo ya banao.
+      var user = widget.auth.currentUser ?? widget.auth.firstUser;
+      if (user == null) {
+        try {
+          final res = await widget.auth
+              .signup(
+                name: 'Qais',
+                email: '',
+                phone: '03000000000',
+                password: 'qistbook',
+                confirm: 'qistbook',
+              )
+              .timeout(const Duration(seconds: 10));
+          if (res.ok) user = res.user;
+        } catch (_) {}
+      }
+      final uid = user?.id ?? defaultUser.id;
+      // Data background me load karo.
+      try {
+        await _store?.init(uid).timeout(const Duration(seconds: 15));
+      } catch (_) {}
+      if (mounted) setState(() {});
+    } catch (_) {}
   }
 
   int _bootSeq = 0;
