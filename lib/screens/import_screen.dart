@@ -708,6 +708,7 @@ class _ImportScreenState extends State<ImportScreen> {
                   title: Text('${r.name}  •  A/C ${r.accountNo}'),
                   subtitle: Text(
                       '${r.cell}  •  Qist Rs ${_rs(r.installment)}  •  Due Rs ${_rs(r.currentDue)}'
+                      '${r.months > 0 ? '  •  ${r.months} mahine baqaya' : ''}'
                       '${r.verified ? '' : '\n${r.flagReason}'}'),
                   isThreeLine: !r.verified,
                   trailing: IconButton(

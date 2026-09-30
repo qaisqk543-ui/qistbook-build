@@ -449,8 +449,8 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
           context: context,
           name: c.name,
           line1: 'A/C ${c.accountNo}  •  ${c.cell}',
-          line2:
-              'Qist ${rs(c.monthlyInstallment)}  •  Last ${c.lastInstDate}',
+          line2: 'Qist ${rs(c.monthlyInstallment)}  •  Last ${c.lastInstDate}'
+              '${c.monthsOverdue > 0 ? '  •  ${c.monthsOverdue} mahine baqaya' : ''}',
           due: c.currentDue,
           balance: c.balance,
           reminderOn: has,

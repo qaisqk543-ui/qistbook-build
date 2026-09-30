@@ -280,6 +280,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             _kv('Due Date', c.dueDate),
             _kv('Due Amount', _rs(c.dueAmount)),
             _kv('A/C Balance', _rs(c.balance)),
+            _kv('Mahine Baqaya', c.monthsOverdue > 0 ? '${c.monthsOverdue}' : ''),
             _kv('Fine Time', c.fineTime),
           ]),
           _card('Customer Information', [

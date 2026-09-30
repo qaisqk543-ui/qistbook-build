@@ -226,6 +226,7 @@ class Customer {
   double paid;
   double currentDue;
   String lastInstDate;
+  int monthsOverdue; // report ka "Mo hs" column — kitne mahine baqaya
   String officer; // recovery/inquiry officer
   AccountStatus status;
   bool needsDetail; // true when created from outstanding-only import
@@ -283,6 +284,7 @@ class Customer {
     this.paid = 0,
     this.currentDue = 0,
     this.lastInstDate = '',
+    this.monthsOverdue = 0,
     this.officer = '',
     this.status = AccountStatus.active,
     this.needsDetail = false,
@@ -342,6 +344,7 @@ class Customer {
         'paid': paid,
         'currentDue': currentDue,
         'lastInstDate': lastInstDate,
+        'monthsOverdue': monthsOverdue,
         'officer': officer,
         'status': status.index,
         'needsDetail': needsDetail ? 1 : 0,
@@ -394,6 +397,9 @@ class Customer {
         paid: _num(m['paid']),
         currentDue: _num(m['currentDue']),
         lastInstDate: (m['lastInstDate'] ?? '').toString(),
+        monthsOverdue: (m['monthsOverdue'] is int)
+            ? m['monthsOverdue'] as int
+            : int.tryParse('${m['monthsOverdue']}') ?? 0,
         officer: (m['officer'] ?? '').toString(),
         status: AccountStatus.values[
             (m['status'] is int ? m['status'] as int : 0) %

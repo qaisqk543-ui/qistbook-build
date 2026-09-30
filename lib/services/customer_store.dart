@@ -628,6 +628,7 @@ class CustomerStore extends ChangeNotifier {
       existing.paid = row.paid;
       existing.currentDue = row.currentDue;
       existing.lastInstDate = row.lastInstDate;
+      existing.monthsOverdue = row.months;
       existing.monthlyInstallment = row.installment;
       if (existing.name.isEmpty) existing.name = row.name;
       if (existing.cell.isEmpty) existing.cell = row.cell;
@@ -658,6 +659,7 @@ class CustomerStore extends ChangeNotifier {
       paid: row.paid,
       currentDue: row.currentDue,
       lastInstDate: row.lastInstDate,
+      monthsOverdue: row.months,
       accountDate: row.accDate,
       officer: row.officer,
       status: row.currentDue > 0 ? AccountStatus.overdue : AccountStatus.active,
