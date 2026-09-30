@@ -148,7 +148,23 @@ class _KistBookAppState extends State<KistBookApp> {
       _setBootStep('Purana data dekh rahe hain…');
       legacy = await widget.auth.legacyDbHasData();
     }
-    final user = widget.auth.currentUser;
+    var user = widget.auth.currentUser;
+    // v1.0.20+: Login khatam — koi session na ho to pehle user ko auto-login.
+    // Qais akela user hai, app free hai — login screen ki zaroorat nahi.
+    if (user == null) {
+      user = widget.auth.firstUser;
+      if (user == null) {
+        _setBootStep('Pehli dafa setup ho raha hai…');
+        final res = await widget.auth.signup(
+          name: 'Qais',
+          email: '',
+          phone: '03000000000',
+          password: 'qistbook',
+          confirm: 'qistbook',
+        );
+        if (res.ok) user = res.user;
+      }
+    }
     if (user != null) {
       await _openStore(user);
     } else if (mounted) {

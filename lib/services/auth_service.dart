@@ -33,6 +33,9 @@ class AuthService {
 
   AppUser? get currentUser => _currentUser;
 
+  /// Pehla user (auto-login ke liye).
+  AppUser? get firstUser => _users.isEmpty ? null : _users.first;
+
   Future<File> _usersFile() async {
     final dir = await getApplicationDocumentsDirectory();
     return File(p.join(dir.path, 'app_users.json'));
