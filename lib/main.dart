@@ -165,19 +165,36 @@ class _KistBookAppState extends State<KistBookApp> {
       // Purana DB connection pehle band karo — do connection ek hi file
       // par kabhi nahi hone chahiye (stale lock se boot atak sakti hai).
       await _store?.closeDb();
-      CustomerStore store = CustomerStore();
+
+      // STEP 1: Pehle SAFE file me kholo — ye foran khulti hai, kabhi nahi
+      // atakti. Is se app ka khulna GUARANTEED hai, chahe asal file par
+      // koi bhi lock ho.
+      CustomerStore safeStore = CustomerStore();
       try {
-        await store
-            .init(user.id, onStep: _setBootStep)
-            .timeout(const Duration(seconds: 20));
+        await safeStore
+            .init(user.id, safeModeFile: true, onStep: _setBootStep)
+            .timeout(const Duration(seconds: 10));
       } on TimeoutException {
-        // Asal data file 20s me khul nahi saki (stale lock / slow storage).
-        // File ko HAATH lagaye baghair memory me khaali app kholo taake
-        // kaam ruke nahi — Home par banner me "Dobara koshish karein" hoga.
-        // Purani (latki hui) init wali instance chhor do, nayi instance lo.
-        ErrorLog.log('Startup', 'Data file timeout — safe mode me khola');
-        store = CustomerStore();
-        await store.init(user.id, inMemory: true, onStep: _setBootStep);
+        // Bohat hi unlikely — phir memory me kholo (ye kabhi nahi atakti).
+        safeStore = CustomerStore();
+        await safeStore.init(user.id, inMemory: true, onStep: _setBootStep);
+      }
+
+      // STEP 2: Asal data file try karo (15s). Khul gayi to wahi use hogi —
+      // Qais ko uska poora data wapas mil jayega. Na khuli to safe mode
+      // (Home par laal banner + "DOBARA KOSHISH KAREIN" button).
+      CustomerStore store = safeStore;
+      try {
+        _setBootStep('Asal data dhoondh rahe hain…');
+        final realStore = CustomerStore();
+        await realStore.init(user.id).timeout(const Duration(seconds: 15));
+        await safeStore.closeDb();
+        store = realStore;
+        ErrorLog.log('Startup', 'Asal data file khul gayi');
+      } on TimeoutException {
+        ErrorLog.log('Startup', 'Asal DB timeout — safe mode me khola');
+      } catch (e) {
+        ErrorLog.log('Startup', 'Asal DB error — safe mode me khola: $e');
       }
       CallReminderService.lookupCustomer = store.findByAccountNo;
       if (firebaseReady) {

@@ -179,15 +179,23 @@ class CustomerStore extends ChangeNotifier {
 
   /// Open (or create) this user's database.
   Future<void> init(String uid,
-      {bool inMemory = false, void Function(String)? onStep}) async {
+      {bool inMemory = false,
+      bool safeModeFile = false,
+      void Function(String)? onStep}) async {
     _uid = uid;
-    // inMemory = safe mode: asal file khul nahi saki to memory me kholo,
-    // file ko haath lagaye baghair taake data mehfooz rahe.
-    safeMode = inMemory;
+    // Safe mode: asal file khul nahi saki to alag safe file (ya memory) me
+    // kholo — asal file ko haath lagaye baghair taake data mehfooz rahe.
+    safeMode = inMemory || safeModeFile;
     onStep?.call('Data file khol rahe hain…');
-    final dbPath = inMemory
-        ? inMemoryDatabasePath
-        : p.join(await getDatabasesPath(), AuthService.userDbName(uid));
+    final String dbPath;
+    if (inMemory) {
+      dbPath = inMemoryDatabasePath;
+    } else if (safeModeFile) {
+      // Alag naam ki file — is par kabhi lock nahi hota, foran khulti hai.
+      dbPath = p.join(await getDatabasesPath(), 'qistbook_${uid}_safe.db');
+    } else {
+      dbPath = p.join(await getDatabasesPath(), AuthService.userDbName(uid));
+    }
     _db = await openDatabase(
       dbPath,
       version: 2,
