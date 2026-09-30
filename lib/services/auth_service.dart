@@ -88,10 +88,6 @@ class AuthService {
     return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
   }
 
-  Future<List<AppUser>> _all() async {
-    return List<AppUser>.from(_users);
-  }
-
   Future<void> _save(AppUser u) async {
     final i = _users.indexWhere((e) => e.id == u.id);
     if (i >= 0) {
