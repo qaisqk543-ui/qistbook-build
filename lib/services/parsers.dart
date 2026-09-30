@@ -51,6 +51,15 @@ final _dateRe = RegExp(r'\d{1,2}-[A-Za-z]{3}-\d{2,4}');
 /// Anchor-based: the cell number (03XXXXXXXXX) splits the row into
 /// a left part (identity) and a right part (money columns).
 OutstandingRow? parseOutstandingRow(String line) {
+  // Pehle strict parser try karo.
+  final strict = _parseOutstandingRowStrict(line);
+  if (strict != null) return strict;
+  // Strict fail ho to lenient fallback.
+  return _parseOutstandingRowLenient(line);
+}
+
+/// Strict parser (original logic).
+OutstandingRow? _parseOutstandingRowStrict(String line) {
   final cellMatch = _cellRe.firstMatch(line);
   if (cellMatch == null) return null;
   final cell = cellMatch.group(0)!;
@@ -119,6 +128,109 @@ OutstandingRow? parseOutstandingRow(String line) {
     paid: _toDouble(money[4]),
     currentDue: _toDouble(money[5]),
     lastInstDate: lastInstDate,
+  );
+}
+
+/// Lenient fallback: jab strict format match na ho.
+/// Koi bhi line jis me A/C No (5-6 digits) + kuch numbers hon.
+/// Cell optional, date optional — jo mile le lo.
+OutstandingRow? _parseOutstandingRowLenient(String line) {
+  final trimmed = line.trim();
+  if (trimmed.isEmpty) return null;
+  // Header/footer lines skip karo.
+  final lower = trimmed.toLowerCase();
+  const skipWords = [
+    'account', 'customer', 'balance', 'installment', 'officer',
+    'total', 'page', 'print', 'date', 'report', 'outstanding',
+    'sr#', 'sr #', 'a/c',
+  ];
+  for (final w in skipWords) {
+    if (lower == w || lower.startsWith('$w ') || lower.endsWith(' $w')) {
+      // Poori line sirf header hai to skip — lekin agar numbers bhi hain to rakho.
+      if (!RegExp(r'\d{5,}').hasMatch(trimmed)) return null;
+    }
+  }
+
+  // A/C No dhoondo: 5-6 digits ka number.
+  final acMatch = RegExp(r'\b\d{5,6}\b').firstMatch(trimmed);
+  if (acMatch == null) return null;
+  final acNo = acMatch.group(0)!;
+
+  // Cell dhoondo (optional).
+  final cellMatch = _cellRe.firstMatch(trimmed);
+  final cell = cellMatch?.group(0) ?? '';
+
+  // Dates dhoondo.
+  final dates = _dateRe.allMatches(trimmed).map((m) => m.group(0)!).toList();
+
+  // Saare numbers nikalo (commas hata kar).
+  final numRe = RegExp(r'[\d,]+\.?\d*');
+  final allNums = numRe
+      .allMatches(trimmed)
+      .map((m) => m.group(0)!.replaceAll(',', ''))
+      .where((s) => s.isNotEmpty && double.tryParse(s) != null)
+      .toList();
+
+  // A/C No aur cell ko numbers se hatao (wo identity hain, paise nahi).
+  final moneyNums = <double>[];
+  for (final n in allNums) {
+    if (n == acNo) continue;
+    if (n == cell) continue;
+    // Sr# (chhota number shuru me) skip — lekin paise bhi chhote ho sakte hain.
+    final v = double.tryParse(n) ?? 0;
+    moneyNums.add(v);
+  }
+  // Kam se kam 2 money numbers hone chahiye (warna ye data row nahi).
+  if (moneyNums.length < 2) return null;
+
+  // Naam: A/C No se pehle/wale text me se — numbers aur dates hata kar.
+  var namePart = trimmed.substring(0, acMatch.start).trim();
+  // Agar A/C No shuru me hai to uske baad wala text dekho.
+  if (namePart.isEmpty || RegExp(r'^\d+$').hasMatch(namePart)) {
+    namePart = trimmed.substring(acMatch.end).trim();
+  }
+  // Cell, dates, aur numbers hatao.
+  if (cell.isNotEmpty) namePart = namePart.replaceAll(cell, ' ');
+  for (final d in dates) {
+    namePart = namePart.replaceAll(d, ' ');
+  }
+  namePart = namePart.replaceAll(RegExp(r'\b\d[\d,]*\.?\d*\b'), ' ');
+  namePart = namePart.replaceAll(RegExp(r'\s+'), ' ').trim();
+  // Officer alag karo agar maloom ho.
+  var officer = '';
+  var name = namePart;
+  for (final known in _knownOfficers) {
+    if (namePart.endsWith(known)) {
+      officer = known;
+      name = namePart.substring(0, namePart.length - known.length).trim();
+      break;
+    }
+  }
+  if (name.isEmpty) name = 'A/C $acNo';
+
+  // Money columns: aakhir se — currentDue, balance, installment.
+  // Lenient: jo mile usay best guess se lagao.
+  double pick(int fromEnd) {
+    if (moneyNums.length >= fromEnd) {
+      return moneyNums[moneyNums.length - fromEnd];
+    }
+    return 0;
+  }
+
+  return OutstandingRow(
+    accountNo: acNo,
+    accDate: dates.isNotEmpty ? dates.first : '',
+    name: name,
+    officer: officer,
+    cell: cell,
+    item: '',
+    price: pick(6),
+    balance: pick(5),
+    installment: pick(4),
+    osAmount: pick(3),
+    paid: pick(2),
+    currentDue: pick(1),
+    lastInstDate: dates.length > 1 ? dates.last : (dates.isNotEmpty ? dates.first : ''),
   );
 }
 

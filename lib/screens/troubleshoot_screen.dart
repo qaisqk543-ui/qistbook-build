@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 
 import '../services/access_control.dart';
 import '../services/backup_service.dart';
+import '../services/call_reminders.dart';
 import '../services/customer_store.dart';
 import '../services/error_log.dart';
 import '../services/reminders.dart';
@@ -197,6 +198,35 @@ class _TroubleshootScreenState extends State<TroubleshootScreen> {
     } catch (e) {
       ErrorLog.log('Troubleshoot device', e);
       return 'Unknown phone';
+    }
+  }
+
+  Future<void> _testNotification() async {
+    setState(() => _busy = true);
+    try {
+      final ok = await CallReminderService.testNotification();
+      if (!mounted) return;
+      final hasPerm = await CallReminderService.hasNotificationPermission();
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Reminder test'),
+          content: Text(
+            ok
+                ? 'Test notification bhej di!${hasPerm ? '' : '\n\n⚠️ Notification permission OFF hai — phone ki Settings > Apps > QistBook > Notifications me ON karo.'}\n\nAgar awaz nahi ayi to phone ka volume / silent mode check karo.'
+                : 'Notification bhejne me masla aaya.\n\nPhone ki Settings > Apps > QistBook > Notifications me ijazat ON karo.',
+            style: AppText.body,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Theek hai'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -389,6 +419,14 @@ class _TroubleshootScreenState extends State<TroubleshootScreen> {
                   'Masla report karein',
                   'WhatsApp par support ko bhejo (auto-filled)',
                   _report,
+                ),
+                _tile(
+                  Icons.notifications_active_rounded,
+                  AppColors.tintGreen,
+                  AppColors.okGreen,
+                  'Reminder sound test',
+                  'Notification bajao — awaz aa rahi hai?',
+                  _testNotification,
                 ),
                 const SizedBox(height: AppSpace.l),
                 const Text('Danger zone',

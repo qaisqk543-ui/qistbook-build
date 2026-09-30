@@ -135,6 +135,8 @@ class CallReminderService {
       importance: Importance.max,
       priority: Priority.high,
       ticker: 'Call reminder',
+      playSound: true,
+      enableVibration: true,
     );
     const details = NotificationDetails(android: androidDetails);
     await _plugin.zonedSchedule(
@@ -238,6 +240,46 @@ class CallReminderService {
     final list = await _loadRaw(prefs);
     list.removeWhere((m) => m['accountNo'] == accountNo);
     await prefs.setString(_prefsKey, jsonEncode(list));
+  }
+
+  /// Test notification — foran bajao taake pata chale sound aa rahi hai.
+  /// Returns true agar notification dikhi.
+  static Future<bool> testNotification() async {
+    try {
+      await init();
+      const androidDetails = AndroidNotificationDetails(
+        _channelId,
+        _channelName,
+        channelDescription: 'QistBook call reminders',
+        importance: Importance.max,
+        priority: Priority.high,
+        ticker: 'Test',
+        playSound: true,
+        enableVibration: true,
+      );
+      const details = NotificationDetails(android: androidDetails);
+      await _plugin.show(
+        9999,
+        'QistBook Test',
+        'Agar ye awaz ke sath aya to reminders kaam karenge! 🔊',
+        details,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Check karo ke notification permission mili hui hai ya nahi.
+  static Future<bool> hasNotificationPermission() async {
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      final granted = await android?.areNotificationsEnabled();
+      return granted ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// True if a future reminder is stored for this account.
