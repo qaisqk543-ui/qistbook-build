@@ -280,7 +280,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             _kv('Due Date', c.dueDate),
             _kv('Due Amount', _rs(c.dueAmount)),
             _kv('A/C Balance', _rs(c.balance)),
-            _kv('Mahine Baqaya', c.monthsOverdue > 0 ? '${c.monthsOverdue}' : ''),
             _kv('Fine Time', c.fineTime),
           ]),
           _card('Customer Information', [
@@ -296,6 +295,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             _kv('Occupation', c.occupation),
             _kv('Monthly Income',
                 c.monthlyIncome > 0 ? _rs(c.monthlyIncome) : ''),
+            _kv('Mahine Baqaya',
+                c.monthsOverdue > 0 ? '${c.monthsOverdue}' : ''),
           ],
               action: IconButton(
                 icon: const Icon(Icons.edit, size: 20),
