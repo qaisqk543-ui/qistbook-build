@@ -2,10 +2,14 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart' hide FirebaseService;
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
 
 import 'models/user.dart';
 import 'screens/app_lock_screen.dart';
@@ -159,6 +163,32 @@ class _KistBookAppState extends State<KistBookApp> {
     }
   }
 
+  /// Qais ki request: data zero karo. Purani data files ko .bak backup me
+  /// rename karo (delete NAHI — zaroorat pare to wapas la sakte hain).
+  /// dart:io ka rename sqflite ke lock se azaad hai, kabhi nahi atakti.
+  Future<void> _freshStart(String uid) async {
+    try {
+      final dir = await getDatabasesPath();
+      final names = <String>[
+        AuthService.userDbName(uid),
+        'qistbook_${uid}_safe.db',
+      ];
+      for (final name in names) {
+        for (final suffix in ['', '-wal', '-shm', '-journal']) {
+          final f = File(p.join(dir, '$name$suffix'));
+          if (await f.exists()) {
+            try {
+              await f.rename(p.join(dir, '$name$suffix.bak'));
+            } catch (_) {}
+          }
+        }
+      }
+      ErrorLog.log('FreshStart', 'Purani data files .bak me backup ho gayin');
+    } catch (e) {
+      ErrorLog.log('FreshStart', e);
+    }
+  }
+
   Future<void> _openStore(AppUser user) async {
     try {
       _setBootStep('Aap ka data khol rahe hain…');
@@ -166,35 +196,29 @@ class _KistBookAppState extends State<KistBookApp> {
       // par kabhi nahi hone chahiye (stale lock se boot atak sakti hai).
       await _store?.closeDb();
 
-      // STEP 1: Pehle SAFE file me kholo — ye foran khulti hai, kabhi nahi
-      // atakti. Is se app ka khulna GUARANTEED hai, chahe asal file par
-      // koi bhi lock ho.
-      CustomerStore safeStore = CustomerStore();
-      try {
-        await safeStore
-            .init(user.id, safeModeFile: true, onStep: _setBootStep)
-            .timeout(const Duration(seconds: 10));
-      } on TimeoutException {
-        // Bohat hi unlikely — phir memory me kholo (ye kabhi nahi atakti).
-        safeStore = CustomerStore();
-        await safeStore.init(user.id, inMemory: true, onStep: _setBootStep);
+      // Qais ki request (v1.0.16): DATA ZERO KARO — purani data files ko
+      // .bak backup karke nayi shuruaat. Sirf ek dafa (flag se guarded),
+      // taake agli dafa khulne par naya data na ure.
+      // dart:io se rename — sqflite ke lock se azaad, kabhi nahi atakti.
+      final prefs = await SharedPreferences.getInstance();
+      if (!(prefs.getBool('fresh_start_v1') ?? false)) {
+        _setBootStep('Nayi shuruaat kar rahe hain…');
+        await _freshStart(user.id);
+        await prefs.setBool('fresh_start_v1', true);
       }
 
-      // STEP 2: Asal data file try karo (15s). Khul gayi to wahi use hogi —
-      // Qais ko uska poora data wapas mil jayega. Na khuli to safe mode
-      // (Home par laal banner + "DOBARA KOSHISH KAREIN" button).
-      CustomerStore store = safeStore;
+      // Fresh DB kholo (onCreate se nayi tables banengi).
+      CustomerStore store = CustomerStore();
       try {
-        _setBootStep('Asal data dhoondh rahe hain…');
-        final realStore = CustomerStore();
-        await realStore.init(user.id).timeout(const Duration(seconds: 15));
-        await safeStore.closeDb();
-        store = realStore;
-        ErrorLog.log('Startup', 'Asal data file khul gayi');
+        await store
+            .init(user.id, onStep: _setBootStep)
+            .timeout(const Duration(seconds: 20));
       } on TimeoutException {
-        ErrorLog.log('Startup', 'Asal DB timeout — safe mode me khola');
-      } catch (e) {
-        ErrorLog.log('Startup', 'Asal DB error — safe mode me khola: $e');
+        // Phir bhi na khule to memory me kholo (ye kabhi nahi atakti) —
+        // app ka khulna guaranteed, phir error screen kabhi nahi.
+        ErrorLog.log('Startup', 'Fresh DB timeout — memory me khola');
+        store = CustomerStore();
+        await store.init(user.id, inMemory: true, onStep: _setBootStep);
       }
       CallReminderService.lookupCustomer = store.findByAccountNo;
       if (firebaseReady) {
@@ -292,6 +316,15 @@ class _KistBookAppState extends State<KistBookApp> {
                               : _bootStep,
                           style: AppText.body,
                           textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        // Version taake screenshot se pata chale konsi build hai.
+                        Text(
+                          'v$kAppVersion',
+                          style: AppText.body.copyWith(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                     ),
