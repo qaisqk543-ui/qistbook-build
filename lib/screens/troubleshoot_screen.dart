@@ -230,6 +230,35 @@ class _TroubleshootScreenState extends State<TroubleshootScreen> {
     }
   }
 
+  Future<void> _realReminderTest() async {
+    setState(() => _busy = true);
+    try {
+      final status = await CallReminderService.debugStatus();
+      final ok = await CallReminderService.scheduleRealTest();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Asal reminder test ⏰'),
+          content: Text(
+            ok
+                ? 'Test lag gaya! Ab 15 second intezar karo — app khuli rakho ya band kar do.\n\nAgar notification aya to reminders bilkul kaam karte hain. Na aye to neeche status dekho:\n\n$status'
+                : 'Test schedule nahi ho saka.\n\nStatus:\n$status\n\nNotification ijazat OFF ho to Settings > Apps > QistBook > Notifications me ON karo.',
+            style: AppText.body,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Theek hai'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _report() async {
     var number = await SupportService.getNumber();
     if (!mounted) return;
@@ -427,6 +456,14 @@ class _TroubleshootScreenState extends State<TroubleshootScreen> {
                   'Reminder sound test',
                   'Notification bajao — awaz aa rahi hai?',
                   _testNotification,
+                ),
+                _tile(
+                  Icons.alarm_rounded,
+                  AppColors.tintAmber,
+                  AppColors.dueRed,
+                  'Asal reminder test (15 second)',
+                  'Haqiqi scheduled reminder — 15 sec me ayega',
+                  _realReminderTest,
                 ),
                 const SizedBox(height: AppSpace.l),
                 const Text('Danger zone',

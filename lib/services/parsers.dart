@@ -460,6 +460,29 @@ double _num(String s) =>
 
 String _digits(String s) => s.replaceAll(RegExp(r'\D'), '');
 
+/// Header ki agli line me bacha-khucha tukra ("Date", "hs", "Amount" jaisa)
+/// — ye data nahi, skip karo.
+bool _isHeaderFragment(OcrLine line) {
+  if (line.words.isEmpty) return false;
+  const frags = {
+    'date', 'inst', 'inst.', 'hs', 'mos', 'mo', 'month', 'months',
+    'amount', 'due', 'no', '#', 'sr', 'a/c', 'a/cno', 'acc', 'cell',
+    'cell#', 'name', 'customer', 'price', 'balance', 'install', 'instal',
+    'installment', 'ment', 'os', 'paid', 'current', 'last', 'officer',
+    'inquiry', 'item',
+  };
+  for (final w in line.words) {
+    final n = _norm(w.text);
+    if (!frags.contains(n) && _headerKey(w.text, false) == null) {
+      return false;
+    }
+  }
+  // Poori line sirf header lafzon ki hai aur A/C number bhi nahi.
+  final digits = _digits(line.text);
+  if (RegExp(r'\d{5,}').hasMatch(digits)) return false;
+  return true;
+}
+
 /// Column-wise parse: pages (har page = OcrLine list).
 /// Header na mile to purane line-parser par fallback.
 OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
@@ -468,6 +491,7 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
   final groupRows = <String, List<double>>{};
   final groupNames = <String, String>{};
   final groupOrder = <String>[];
+  final rowGroups = <String>[]; // har row kis group section ki hai
   var currentGroup = '';
   double pageTotalDue = 0;
   OutstandingRow? prevRow;
@@ -493,14 +517,32 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
           currentDue: r.currentDue,
           lastInstDate: r.lastInstDate,
         ));
+        rowGroups.add(currentGroup);
       }
       failed.addAll(fb.failed);
       continue;
     }
 
-    for (final line in page) {
+    // Header se PEHLE ki lines (title, address, print-date) — ye data nahi,
+    // inhe "failed" me dalna shor hai. Pehli header line dhoondo.
+    var firstHeaderIdx = page.length;
+    for (var i = 0; i < page.length; i++) {
+      var hits = 0;
+      for (final w in page[i].words) {
+        if (_headerKey(w.text, false) != null) hits++;
+      }
+      if (hits >= 3) {
+        firstHeaderIdx = i;
+        break;
+      }
+    }
+
+    for (var li = 0; li < page.length; li++) {
+      final line = page[li];
       final text = line.text.trim();
       if (text.isEmpty) continue;
+      // Title/address header se pehle — khamoshi se skip.
+      if (li < firstHeaderIdx) continue;
       final cols = _assignColumns(line, bounds);
 
       // Header line khud skip.
@@ -509,6 +551,8 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
         if (_headerKey(w.text, false) != null) headerHits++;
       }
       if (headerHits >= 3) continue;
+      // Header ka bacha-khucha tukra (agli line me "Date"/"hs" jaisa) skip.
+      if (_isHeaderFragment(line)) continue;
 
       final acNo = _digits(cols['accountNo'] ?? '');
       final isAcNo = RegExp(r'^\d{5,6}$').hasMatch(acNo);
@@ -532,23 +576,20 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
 
       if (!isAcNo) {
         // Group header row? (officer ka naam + 3 totals, price/installment 0)
-        final leftText = [
-          cols['name'],
-          cols['officer'],
-          cols['accDate'],
-          cols['sr'],
-        ].where((s) => s != null && s.trim().isNotEmpty).join(' ').trim();
+        // Naam poori line se nikalo (column-split "Faiz Rasool" ko "Faiz"
+        // na banaye) — sirf hindse hatayen.
+        final lineName = text
+            .replaceAll(RegExp(r'\d[\d,]*'), ' ')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
         final hasTotals = (os > 0 || paid > 0 || due > 0) &&
             price == 0 &&
             installment == 0 &&
             balance == 0;
         if (hasTotals &&
-            leftText.isNotEmpty &&
-            !RegExp(r'\d{5,}').hasMatch(leftText)) {
-          final gname = leftText
-              .replaceAll(RegExp(r'\d[\d,]*'), '')
-              .replaceAll(RegExp(r'\s+'), ' ')
-              .trim();
+            lineName.isNotEmpty &&
+            !RegExp(r'\d{5,}').hasMatch(cols['accountNo'] ?? '')) {
+          final gname = lineName;
           if (gname.isNotEmpty) {
             currentGroup = gname;
             if (!groupOrder.contains(gname)) groupOrder.add(gname);
@@ -630,20 +671,27 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
         flagReason: reason,
       );
       rows.add(row);
+      rowGroups.add(currentGroup);
       prevRow = row;
     }
   }
 
-  // Group reconciliation.
+  // Group reconciliation — section ke hisab se (rows apne group header ke
+  // neeche wali hain, officer column se match nahi).
   final groups = <OfficerGroupCheck>[];
   for (final g in groupOrder) {
     final totals = groupRows[g] ?? [0.0, 0.0, 0.0];
-    final parsedDue = rows
-        .where((r) => r.officer == g)
-        .fold(0.0, (s, r) => s + r.currentDue);
+    var parsedDue = 0.0;
+    var count = 0;
+    for (var i = 0; i < rows.length; i++) {
+      if (rowGroups[i] == g) {
+        parsedDue += rows[i].currentDue;
+        count++;
+      }
+    }
     groups.add(OfficerGroupCheck(
       officer: g,
-      rowCount: rows.where((r) => r.officer == g).length,
+      rowCount: count,
       expectedDue: totals[2],
       parsedDue: parsedDue,
     ));

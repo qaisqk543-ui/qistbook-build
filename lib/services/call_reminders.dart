@@ -346,6 +346,65 @@ class CallReminderService {
     }
   }
 
+  /// Reminder system ki mukammal sehat-report: ijazaten + pending count.
+  /// "Masla hal karein" screen me dikhaya jata hai.
+  static Future<String> debugStatus() async {
+    try {
+      await init();
+      final notif = await hasNotificationPermission();
+      final exact = await canScheduleExactAlarms();
+      var pending = 0;
+      try {
+        pending = (await _plugin.pendingNotificationRequests()).length;
+      } catch (_) {}
+      return 'Notification ijazat: ${notif ? "ON ✅" : "OFF ❌"}\n'
+          'Exact alarm ijazat: ${exact ? "ON ✅" : "OFF (inexact mode)"}\n'
+          'Pending reminders: $pending';
+    } catch (e) {
+      return 'Status nahi mil saka: $e';
+    }
+  }
+
+  /// ASAL reminder test: 15 second baad ek HAQIQI scheduled notification
+  /// (wahi rasta jo asal reminder use karta hai — zonedSchedule).
+  /// App khuli ho ya band, 15 second intezar karo.
+  static Future<bool> scheduleRealTest() async {
+    try {
+      await init();
+      if (!await hasNotificationPermission()) return false;
+      final exactOk = await canScheduleExactAlarms();
+      final mode = exactOk
+          ? AndroidScheduleMode.exactAllowWhileIdle
+          : AndroidScheduleMode.inexactAllowWhileIdle;
+      const androidDetails = AndroidNotificationDetails(
+        _channelId,
+        _channelName,
+        channelDescription: 'QistBook call reminders',
+        importance: Importance.max,
+        priority: Priority.high,
+        ticker: 'Test reminder',
+        playSound: true,
+        enableVibration: true,
+      );
+      const details = NotificationDetails(android: androidDetails);
+      final when =
+          tz.TZDateTime.now(tz.local).add(const Duration(seconds: 15));
+      await _plugin.zonedSchedule(
+        9998,
+        'QistBook Test Reminder ⏰',
+        'Ye 15 second wala ASAL test hai — agar ye aya to reminders kaam karte hain!',
+        when,
+        details,
+        androidScheduleMode: mode,
+        payload: 'TEST',
+      );
+      final pending = await _plugin.pendingNotificationRequests();
+      return pending.any((p) => p.id == 9998);
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Check karo ke notification permission mili hui hai ya nahi.
   static Future<bool> hasNotificationPermission() async {
     try {

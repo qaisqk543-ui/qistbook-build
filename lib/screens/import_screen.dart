@@ -7,6 +7,7 @@
 /// Save karte hi data foran update + cloud sync.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -87,22 +88,37 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   /// Rasterize every PDF page to a temp PNG so OCR can read it.
-  Future<List<String>> _pdfToImagePaths(String pdfPath) async {
+  /// Har page alag try/catch me — ek kharab page baqiyon ko nahi rokta.
+  Future<List<String>> _pdfToImagePaths(
+      String pdfPath, void Function(String) onStep) async {
     final doc = await PdfDocument.openFile(pdfPath);
     final out = <String>[];
     final tmp = Directory.systemTemp;
-    for (var i = 1; i <= doc.pagesCount; i++) {
-      final page = await doc.getPage(i);
-      final img = await page.render(
-          width: page.width * 2,
-          height: page.height * 2,
-          format: PdfPageImageFormat.png);
-      final file = File('${tmp.path}/kistbook_p$i.png');
-      await file.writeAsBytes(img!.bytes);
-      out.add(file.path);
-      await page.close();
+    try {
+      final n = doc.pagesCount;
+      for (var i = 1; i <= n; i++) {
+        onStep('Page $i/$n tayaar ho raha hai…');
+        try {
+          final page = await doc.getPage(i);
+          try {
+            final img = await page.render(
+                width: page.width * 2,
+                height: page.height * 2,
+                format: PdfPageImageFormat.png);
+            final file = File('${tmp.path}/kistbook_p$i.png');
+            await file.writeAsBytes(img!.bytes);
+            out.add(file.path);
+          } finally {
+            await page.close();
+          }
+        } catch (e) {
+          // Ye page skip — baqi pages ka data zaya nahi hoga.
+          debugPrint('QistBook: PDF page $i render fail: $e');
+        }
+      }
+    } finally {
+      await doc.close();
     }
-    await doc.close();
     return out;
   }
 
@@ -130,17 +146,61 @@ class _ImportScreenState extends State<ImportScreen> {
 
   /// Method 3: PDF file with multiple customers.
   Future<void> _pickPdf() async {
-    final res = await FilePicker.platform.pickFiles(
-        type: FileType.custom, allowedExtensions: ['pdf']);
-    if (res == null || res.files.single.path == null) return;
+    FilePickerResult? res;
+    try {
+      res = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+        withData: true, // kuch phones path nahi dete — bytes se kaam chalao
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = 'PDF chunne me masla: $e');
+      return;
+    }
+    if (res == null || res.files.isEmpty) return; // user ne cancel kiya
+    final picked = res.files.single;
+    String? pdfPath = picked.path;
+    // Path na mile to bytes ko temp file me likho.
+    if (pdfPath == null && picked.bytes != null) {
+      try {
+        final tmp = Directory.systemTemp;
+        final f = File(
+            '${tmp.path}/kistbook_import_${DateTime.now().millisecondsSinceEpoch}.pdf');
+        await f.writeAsBytes(picked.bytes!);
+        pdfPath = f.path;
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _status = 'PDF save nahi ho saki: $e');
+        return;
+      }
+    }
+    if (pdfPath == null) {
+      if (!mounted) return;
+      setState(() => _status =
+          'PDF ka path nahi mila — dobara koshish karo ya gallery se photo lo.');
+      return;
+    }
     setState(() {
       _busy = true;
       _status = 'PDF parh rahe hain…';
     });
     try {
-      final pages = await _pdfToImagePaths(res.files.single.path!);
+      final pages = await _pdfToImagePaths(
+        pdfPath,
+        (s) {
+          if (mounted) setState(() => _status = s);
+        },
+      ).timeout(
+        const Duration(minutes: 3),
+        onTimeout: () => throw TimeoutException('PDF render me zyada waqt lag raha hai'),
+      );
+      if (pages.isEmpty) {
+        throw Exception('PDF ke pages parhe nahi ja sake');
+      }
       await _processImages(pages);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _busy = false;
         _status = 'PDF error: $e';
