@@ -9,6 +9,7 @@
 /// customers monthly rollover me FROZEN hote hain (unki due khud nahi badalti).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -20,6 +21,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/customer.dart';
 import '../theme/app_theme.dart' show monthKey, isoDate;
 import 'auth_service.dart';
+import 'error_log.dart';
 import 'firebase_service.dart';
 import 'parsers.dart';
 
@@ -47,6 +49,11 @@ class CustomerStore extends ChangeNotifier {
   final List<ReceivedPayment> _payments = [];
   final List<VoucherEntry> _vouchers = [];
   String? _uid;
+  String? get uid => _uid;
+
+  /// Safe mode = asal data file khul nahi saki, app memory me kholi hai
+  /// taake kaam ruke nahi. Banner me "Dobara koshish karein" hota hai.
+  bool safeMode = false;
 
   /// When the data was last refreshed by an import (shown in the UI so the
   /// user can trust the numbers are current).
@@ -171,11 +178,18 @@ class CustomerStore extends ChangeNotifier {
   }
 
   /// Open (or create) this user's database.
-  Future<void> init(String uid) async {
+  Future<void> init(String uid,
+      {bool inMemory = false, void Function(String)? onStep}) async {
     _uid = uid;
-    final dir = await getDatabasesPath();
+    // inMemory = safe mode: asal file khul nahi saki to memory me kholo,
+    // file ko haath lagaye baghair taake data mehfooz rahe.
+    safeMode = inMemory;
+    onStep?.call('Data file khol rahe hain…');
+    final dbPath = inMemory
+        ? inMemoryDatabasePath
+        : p.join(await getDatabasesPath(), AuthService.userDbName(uid));
     _db = await openDatabase(
-      p.join(dir, AuthService.userDbName(uid)),
+      dbPath,
       version: 2,
       onCreate: (db, _) async {
         await db.execute(
@@ -192,6 +206,7 @@ class CustomerStore extends ChangeNotifier {
         }
       },
     );
+    onStep?.call('Data parh rahe hain…');
     await _loadAll();
     // Demo mode (no Firebase configured): seed the 5 real sample rows so the
     // UI can be checked immediately. Real Firebase setups start empty.
@@ -215,6 +230,29 @@ class CustomerStore extends ChangeNotifier {
       await _db?.close();
     } catch (_) {}
     _db = null;
+  }
+
+  /// Safe mode se asal data file dobara kholne ki koshish.
+  /// Kamyab ho to safeMode=false, na ho to wapas safe mode. Kabhi throw nahi karta.
+  Future<bool> retryRealDb() async {
+    final u = _uid;
+    if (u == null) return false;
+    try {
+      await closeDb();
+    } catch (_) {}
+    try {
+      await init(u).timeout(const Duration(seconds: 25));
+      return !safeMode;
+    } catch (e) {
+      ErrorLog.log('SafeMode', e);
+      try {
+        await closeDb();
+      } catch (_) {}
+      try {
+        await init(u, inMemory: true);
+      } catch (_) {}
+      return false;
+    }
   }
 
   /// Load everything from the user's DB + run idempotent migrations.

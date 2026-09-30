@@ -165,8 +165,20 @@ class _KistBookAppState extends State<KistBookApp> {
       // Purana DB connection pehle band karo — do connection ek hi file
       // par kabhi nahi hone chahiye (stale lock se boot atak sakti hai).
       await _store?.closeDb();
-      final store = CustomerStore();
-      await store.init(user.id);
+      CustomerStore store = CustomerStore();
+      try {
+        await store
+            .init(user.id, onStep: _setBootStep)
+            .timeout(const Duration(seconds: 20));
+      } on TimeoutException {
+        // Asal data file 20s me khul nahi saki (stale lock / slow storage).
+        // File ko HAATH lagaye baghair memory me khaali app kholo taake
+        // kaam ruke nahi — Home par banner me "Dobara koshish karein" hoga.
+        // Purani (latki hui) init wali instance chhor do, nayi instance lo.
+        ErrorLog.log('Startup', 'Data file timeout — safe mode me khola');
+        store = CustomerStore();
+        await store.init(user.id, inMemory: true, onStep: _setBootStep);
+      }
       CallReminderService.lookupCustomer = store.findByAccountNo;
       if (firebaseReady) {
         await store.bindUser(user.id);
@@ -386,6 +398,22 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _index = 0;
+  bool _retryingDb = false;
+
+  /// Safe mode: asal data file dobara kholne ki koshish.
+  Future<void> _retryDb() async {
+    setState(() => _retryingDb = true);
+    final ok = await widget.store.retryRealDb();
+    if (mounted) {
+      setState(() => _retryingDb = false);
+      showAppSnack(
+        context,
+        ok
+            ? 'Mubarak ho — aap ka asal data wapas mil gaya!'
+            : 'Abhi bhi khul nahi saka. Phone restart karke phir try karein.',
+      );
+    }
+  }
 
   void _navigate(int i) {
     if (i == -1) {
@@ -452,6 +480,34 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                 'Offline mode — Firebase setup baqi hai. Data sirf is phone me save hoga.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14),
+              ),
+            ),
+          // Safe mode: asal data file khul nahi saki thi — app memory me
+          // kholi hai taake kaam ruke nahi. File ko haath nahi lagaya.
+          if (widget.store.safeMode)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              color: Colors.red.shade100,
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '⚠️ Aap ka data khul nahi saka — safe mode me app kholi hai.',
+                      style: TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  _retryingDb
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: _retryDb,
+                          child: const Text('DOBARA KOSHISH KAREIN'),
+                        ),
+                ],
               ),
             ),
           Expanded(
