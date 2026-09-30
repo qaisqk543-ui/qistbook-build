@@ -180,24 +180,43 @@ class CustomerStore extends ChangeNotifier {
   }
 
   /// Open (or create) this user's data file (JSON — kabhi nahi atakti).
+  /// Har step me timeout hai — koi bhi file operation atak jaye to app
+  /// khaali data ke saath aage barhegi, hang nahi hogi.
   Future<void> init(String uid, {void Function(String)? onStep}) async {
     _uid = uid;
     safeMode = false;
-    onStep?.call('Data file khol rahe hain…');
-    await _loadAll();
+    try {
+      onStep?.call('Data file khol rahe hain…');
+      await _loadAll().timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          ErrorLog.log('CustomerStore', 'Load timeout — starting empty');
+        },
+      );
+    } catch (e) {
+      ErrorLog.log('CustomerStore', e);
+    }
     onStep?.call('Data parh rahe hain…');
-    // Demo mode (no Firebase configured): seed the 5 real sample rows so the
-    // UI can be checked immediately. Real Firebase setups start empty.
-    if (_customers.isEmpty && !FirebaseService.enabled) {
-      await _seedSampleData();
+    try {
+      // Demo mode (no Firebase configured): seed the 5 real sample rows so the
+      // UI can be checked immediately. Real Firebase setups start empty.
+      if (_customers.isEmpty && !FirebaseService.enabled) {
+        await _seedSampleData().timeout(const Duration(seconds: 10));
+      }
+      // Demo mode: one-time guarantor/collection enrichment for the samples —
+      // also covers older installs that seeded before this existed.
+      if (!FirebaseService.enabled) {
+        await _enrichSampleDetails().timeout(const Duration(seconds: 10));
+      }
+    } catch (e) {
+      ErrorLog.log('CustomerStore', e);
     }
-    // Demo mode: one-time guarantor/collection enrichment for the samples —
-    // also covers older installs that seeded before this existed.
-    if (!FirebaseService.enabled) {
-      await _enrichSampleDetails();
-    }
-    final prefs = await SharedPreferences.getInstance();
-    wifiOnlySync = prefs.getBool('wifi_only_sync') ?? false;
+    try {
+      final prefs = await SharedPreferences.getInstance().timeout(
+        const Duration(seconds: 5),
+      );
+      wifiOnlySync = prefs.getBool('wifi_only_sync') ?? false;
+    } catch (_) {}
     _sort();
     notifyListeners();
   }

@@ -160,42 +160,56 @@ class _KistBookAppState extends State<KistBookApp> {
   }
 
   Future<void> _openStore(AppUser user) async {
-    try {
-      _setBootStep('Aap ka data khol rahe hain…');
-      await _store?.closeDb();
+    // v1.0.19+: App PEHLE khulti hai, data BAAD me aata hai.
+    // Kabhi bhi data loading par atakna impossible — UI foran dikhegi.
+    final store = CustomerStore();
+    CallReminderService.lookupCustomer = store.findByAccountNo;
+    final access = AccessControl();
 
-      // v1.0.17+: JSON file storage — SQLite ka koi lock nahi, kabhi nahi
-      // atakti. Seedha kholo, koi timeout/fallback ki zaroorat nahi.
-      final store = CustomerStore();
-      await store.init(user.id, onStep: _setBootStep);
-      CallReminderService.lookupCustomer = store.findByAccountNo;
+    // UI foran dikhao — data background me aayega.
+    if (mounted) {
+      setState(() {
+        _store = store;
+        _access = access;
+        _loading = false;
+        _openError = null;
+      });
+    }
+
+    // Data background me load karo (timeout ke saath — kabhi nahi atkegi).
+    try {
+      await store.init(user.id, onStep: _setBootStep).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          ErrorLog.log('Startup', 'Data load timeout — empty start');
+        },
+      );
       if (firebaseReady) {
-        await store.bindUser(user.id);
+        try {
+          await store.bindUser(user.id).timeout(const Duration(seconds: 10));
+        } catch (_) {}
       }
-      // App Lock: PIN laga ho to pehle PIN mango (login ke baad).
-      final locked = await AppLockService.isEnabled(user.id);
-      // Subscription read-only state (owner kabhi read-only nahi).
-      final access = AccessControl();
-      await access.init(user.id);
-      await SubscriptionService.ensureExpiryReminder(user.id);
+      final locked = await AppLockService.isEnabled(user.id).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => false,
+      );
+      await access.init(user.id).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {},
+      );
+      try {
+        await SubscriptionService.ensureExpiryReminder(user.id).timeout(
+          const Duration(seconds: 5),
+        );
+      } catch (_) {}
       if (mounted) {
         setState(() {
-          _store = store;
-          _access = access;
           _pendingPinUser = locked ? user : null;
-          _loading = false;
-          _openError = null;
         });
       }
     } catch (e) {
       ErrorLog.log('Startup', e);
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _openError =
-              'Data khulne me masla aaya. Koi baat nahi — dobara try karein.';
-        });
-      }
+      // App khuli rahegi — data khaali hoga, retry ka option milega.
     }
   }
 
