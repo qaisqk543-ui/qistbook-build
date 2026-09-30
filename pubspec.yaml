@@ -1,7 +1,7 @@
 name: kistbook
 description: Kist Book - installment (qist) management app for shops.
 publish_to: 'none'
-version: 1.0.25+26
+version: 1.0.26+27
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -28,6 +28,8 @@ dependencies:
   path_provider: ^2.1.5
   # Open WhatsApp chats + phone dialer
   url_launcher: ^6.3.2
+  # Open system notification settings (reminder permission guide)
+  app_settings: ^9.0.0
   # Send SMS directly from the phone (Android)
   telephony: ^0.2.0
   # Internet check + data-saver setting (social packages)

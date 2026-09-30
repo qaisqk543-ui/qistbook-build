@@ -68,6 +68,35 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     }
   }
 
+  /// Customer Information section se customer delete karo (confirm ke sath).
+  Future<void> _deleteCustomer() async {
+    if (!await requireEdit(context)) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Customer delete karo?'),
+        content: Text(
+            '${c.name} (A/C ${c.accountNo}) ka record delete ho jayega. Ye wapas nahi aayega.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Nahi')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Haan, delete karo',
+                  style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    await context.read<CustomerStore>().deleteCustomers({c.accountNo});
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Customer delete ho gaya')));
+      Navigator.of(context).pop();
+    }
+  }
+
   // ------------------------------------------------------------ edit dialogs
 
   Future<void> _editPhones() async {
@@ -298,10 +327,21 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             _kv('Mahine Baqaya',
                 c.monthsOverdue > 0 ? '${c.monthsOverdue}' : ''),
           ],
-              action: IconButton(
-                icon: const Icon(Icons.edit, size: 20),
-                tooltip: 'Contact numbers edit karo',
-                onPressed: _editPhones,
+              action: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.edit, size: 20),
+                    tooltip: 'Contact numbers edit karo',
+                    onPressed: _editPhones,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline,
+                        size: 20, color: Colors.red),
+                    tooltip: 'Customer delete karo',
+                    onPressed: _deleteCustomer,
+                  ),
+                ],
               )),
           _extraContactsCard(),
           _notesCard(),

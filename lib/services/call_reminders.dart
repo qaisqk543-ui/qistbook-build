@@ -5,6 +5,7 @@ library;
 
 import 'dart:convert';
 
+import 'package:app_settings/app_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,16 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/customer.dart';
 import 'reminders.dart';
+
+/// Reminder lagate waqt aane wali ghalti — UI seedha Urdu me dikhaye.
+/// [needsSettings] = true ho to "Settings kholo" ka button dikhana chahiye.
+class ReminderError implements Exception {
+  final String message;
+  final bool needsSettings;
+  ReminderError(this.message, {this.needsSettings = false});
+  @override
+  String toString() => message;
+}
 
 /// Global navigator key so the reminder tap handler can show dialogs from
 /// anywhere. Set on MaterialApp in main.dart.
@@ -37,11 +48,13 @@ class CallReminderService {
   static Future<void> init() async {
     if (_ready) return;
     // Notifications must NEVER crash app launch — any failure here is
-    // swallowed so the app always opens.
+    // swallowed so the app always opens. _ready sirf kamyabi par true —
+    // nakami par agli call dobara koshish karegi (pehle hamesha true ho
+    // jata tha, phir plugin kabhi init hi nahi hota tha).
     try {
       await _initUnsafe();
+      _ready = true;
     } catch (_) {}
-    _ready = true;
   }
 
   static Future<void> _initUnsafe() async {
@@ -60,7 +73,28 @@ class CallReminderService {
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
-    await android?.requestExactAlarmsPermission();
+    // NOTE: exact-alarm ki ijazat app khulne par NAHI mangte (user seedha
+    // system settings me phenk diya jata tha). Sirf reminder lagate waqt
+    // check hogi — na mile to inexact alarm se kaam chalega.
+  }
+
+  /// Phone ki notification settings kholo (ijazat OFF ho to guide ke liye).
+  static Future<void> openNotificationSettings() async {
+    try {
+      await AppSettings.openAppSettings(
+          type: AppSettingsType.notification);
+    } catch (_) {}
+  }
+
+  /// Android 12+ : kya exact alarm lag sakta hai?
+  static Future<bool> canScheduleExactAlarms() async {
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      return await android?.canScheduleExactNotifications() ?? true;
+    } catch (_) {
+      return true;
+    }
   }
 
   /// Call after init + runApp when the app may have been launched by tapping
@@ -123,10 +157,37 @@ class CallReminderService {
 
   /// Schedule a call reminder at an exact [when] (Asia/Karachi wall clock).
   /// Returns null (and schedules nothing) when [when] is not in the future.
+  /// Throws [ReminderError] (Urdu message) jab ijazat na ho ya schedule
+  /// register na ho — UI seedha user ko dikhaye.
   static Future<DateTime?> scheduleReminderAt(
       Customer c, DateTime when) async {
     await init();
     if (!when.isAfter(DateTime.now())) return null;
+
+    // 1) Notification ki ijazat lazmi — is ke baghair alarm lag to jata
+    //    hai lekin na notification ati hai na awaz (yehi asal masla tha).
+    var perm = await hasNotificationPermission();
+    if (!perm) {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await android?.requestNotificationsPermission();
+      perm = await hasNotificationPermission();
+    }
+    if (!perm) {
+      throw ReminderError(
+        'Notification ki ijazat OFF hai — isi liye reminder lagta to hai '
+        'lekin na notification ati hai na awaz. Settings me ON karo.',
+        needsSettings: true,
+      );
+    }
+
+    // 2) Exact alarm ki ijazat ho to bilkul time par, warna inexact
+    //    (ijazat ke baghair bhi bajta hai, chand minute ka farq ho sakta hai).
+    final exactOk = await canScheduleExactAlarms();
+    final mode = exactOk
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
+
     final tzScheduled = tz.TZDateTime.from(when, tz.local);
     const androidDetails = AndroidNotificationDetails(
       _channelId,
@@ -139,15 +200,28 @@ class CallReminderService {
       enableVibration: true,
     );
     const details = NotificationDetails(android: androidDetails);
-    await _plugin.zonedSchedule(
-      _notifId(c.accountNo),
-      'Call Reminder',
-      '${c.name} ko call ka time ho gaya — Due Rs ${c.currentDue.toStringAsFixed(0)}',
-      tzScheduled,
-      details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      payload: c.accountNo,
-    );
+    try {
+      await _plugin.zonedSchedule(
+        _notifId(c.accountNo),
+        'Call Reminder',
+        '${c.name} ko call ka time ho gaya — Due Rs ${c.currentDue.toStringAsFixed(0)}',
+        tzScheduled,
+        details,
+        androidScheduleMode: mode,
+        payload: c.accountNo,
+      );
+    } catch (_) {
+      throw ReminderError(
+          'Reminder set nahi ho saka — dobara koshish karo.');
+    }
+
+    // 3) Tasdeeq: OS ne alarm register kiya ya nahi?
+    final pending = await _plugin.pendingNotificationRequests();
+    if (!pending.any((p) => p.id == _notifId(c.accountNo))) {
+      throw ReminderError(
+          'Phone ne reminder register nahi kiya — dobara koshish karo.');
+    }
+
     await _saveReminder(c, when);
     return when;
   }
@@ -243,10 +317,12 @@ class CallReminderService {
   }
 
   /// Test notification — foran bajao taake pata chale sound aa rahi hai.
-  /// Returns true agar notification dikhi.
+  /// Returns true agar notification dikhi. Ijazat OFF ho to false (pehle
+  /// hamesha true kehta tha jabke kuch dikhta hi nahi tha).
   static Future<bool> testNotification() async {
     try {
       await init();
+      if (!await hasNotificationPermission()) return false;
       const androidDetails = AndroidNotificationDetails(
         _channelId,
         _channelName,

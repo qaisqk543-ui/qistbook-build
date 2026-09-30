@@ -573,16 +573,51 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       ),
     );
     if (confirm != true || !context.mounted) return;
-    final scheduled =
-        await CallReminderService.scheduleReminderAt(c, when);
-    if (context.mounted) {
-      if (scheduled == null) {
-        showAppSnack(context,
-            'Ye waqt guzar chuka hai — aage ki date/time chuno');
+    try {
+      final scheduled =
+          await CallReminderService.scheduleReminderAt(c, when);
+      if (context.mounted) {
+        if (scheduled == null) {
+          showAppSnack(context,
+              'Ye waqt guzar chuka hai — aage ki date/time chuno');
+        } else {
+          showAppSnack(
+              context, 'Reminder lag gaya: ${fmtDayTime(scheduled)}');
+          setState(() {});
+        }
+      }
+    } on ReminderError catch (e) {
+      if (!context.mounted) return;
+      if (e.needsSettings) {
+        final open = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Notification ijazat OFF hai'),
+            content: Text(
+              '${e.message}\n\n"Settings kholo" dabao, phir Notifications ON karo.',
+              style: AppText.body,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Rehne do'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Settings kholo'),
+              ),
+            ],
+          ),
+        );
+        if (open == true) {
+          await CallReminderService.openNotificationSettings();
+        }
       } else {
-        showAppSnack(
-            context, 'Reminder lag gaya: ${fmtDayTime(scheduled)}');
-        setState(() {});
+        showAppSnack(context, e.message);
+      }
+    } catch (_) {
+      if (context.mounted) {
+        showAppSnack(context, 'Reminder nahi lag saka — dobara koshish karo');
       }
     }
   }
