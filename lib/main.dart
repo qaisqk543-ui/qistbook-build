@@ -113,6 +113,11 @@ class _KistBookAppState extends State<KistBookApp> {
   }
 
   int _bootSeq = 0;
+  String _bootStep = '';
+
+  void _setBootStep(String s) {
+    if (mounted) setState(() => _bootStep = s);
+  }
 
   Future<void> _boot() async {
     // Safety net: boot kabhi bhi eternal spinner par nahi atke gi.
@@ -128,17 +133,19 @@ class _KistBookAppState extends State<KistBookApp> {
         setState(() {
           _loading = false;
           _openError =
-              'App khulne me der ho rahi hai. Koi baat nahi — neeche button dabao.';
+              'App khulne me der ho rahi hai.\nRukawat: ${_bootStep.isEmpty ? 'shuru me hi' : _bootStep}\nKoi baat nahi — neeche button dabao.';
         });
       }
     }
   }
 
   Future<void> _bootInner() async {
+    _setBootStep('User check ho raha hai…');
     final hasAny = await widget.auth.checkHasAnyUser();
     var legacy = false;
     if (!hasAny) {
       // Pehli dafa: purana (v1.0.7) single-DB data hai to adopt karenge.
+      _setBootStep('Purana data dekh rahe hain…');
       legacy = await widget.auth.legacyDbHasData();
     }
     final user = widget.auth.currentUser;
@@ -154,6 +161,10 @@ class _KistBookAppState extends State<KistBookApp> {
 
   Future<void> _openStore(AppUser user) async {
     try {
+      _setBootStep('Aap ka data khol rahe hain…');
+      // Purana DB connection pehle band karo — do connection ek hi file
+      // par kabhi nahi hone chahiye (stale lock se boot atak sakti hai).
+      await _store?.closeDb();
       final store = CustomerStore();
       await store.init(user.id);
       CallReminderService.lookupCustomer = store.findByAccountNo;
@@ -201,8 +212,14 @@ class _KistBookAppState extends State<KistBookApp> {
     // Providers hatane se pehle pushed routes saaf karo (wo store ko
     // watch karti hain) — warna rebuild par ProviderNotFound.
     appNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+    // DB connection bhi band karo taake agli dafa khulne par stale
+    // lock ka koi chance na ho.
+    final old = _store;
+    _store = null;
+    if (old != null) {
+      old.closeDb();
+    }
     setState(() {
-      _store = null;
       _access = null;
       _pendingPinUser = null;
       _loading = false;
@@ -229,8 +246,29 @@ class _KistBookAppState extends State<KistBookApp> {
             // Kaunsi home screen dikhani hai.
             final Widget home;
             if (_loading) {
-              home = const Scaffold(
-                  body: Center(child: CircularProgressIndicator()));
+              // Boot progress: agar kahin ruke to screen par nazar aayega
+              // ke KAHAN ruka — screenshot se asal wajah pata chal jayegi.
+              home = Scaffold(
+                body: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 20),
+                        Text(
+                          _bootStep.isEmpty
+                              ? 'QistBook khul raha hai…'
+                              : _bootStep,
+                          style: AppText.body,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
             } else if (_openError != null) {
               home = _errorHome();
             } else if (_pendingPinUser != null) {
