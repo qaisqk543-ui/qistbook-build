@@ -34,8 +34,22 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
   String _officer = 'All';
   String _query = '';
   final Set<String> _selected = {};
+  bool _selectionMode = false;
 
-  bool get _selecting => _selected.isNotEmpty;
+  bool get _selecting => _selectionMode;
+
+  void _enterSelectionMode() {
+    setState(() {
+      _selectionMode = true;
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selected.clear();
+    });
+  }
 
   Future<void> _refresh(CustomerStore store) async {
     await store.refreshData();
@@ -63,17 +77,13 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final store = context.watch<CustomerStore>();
+  /// Search + officer filter wali list (build aur select-all dono ke liye).
+  List<Customer> _filteredList() {
+    final store = context.read<CustomerStore>();
     final base = store.outstanding;
-    final officers = <String>[
-      'All',
-      ...{for (final c in base) c.officer.isEmpty ? '—' : c.officer},
-    ];
     final q = _query.trim().toLowerCase();
     final qDigits = q.replaceAll(RegExp(r'\D'), '');
-    final list = (_officer == 'All'
+    return (_officer == 'All'
             ? base
             : base
                 .where((c) =>
@@ -89,6 +99,17 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
       }
       return false;
     }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final store = context.watch<CustomerStore>();
+    final base = store.outstanding;
+    final officers = <String>[
+      'All',
+      ...{for (final c in base) c.officer.isEmpty ? '—' : c.officer},
+    ];
+    final list = _filteredList();
     final totalOutstanding =
         list.fold(0.0, (s, c) => s + c.balance);
     final totalPayable =
@@ -96,22 +117,43 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_selecting ? '${_selected.length} selected' : 'Outstanding'),
+        title: Text(_selecting
+            ? '${_selected.length} selected'
+            : 'Outstanding'),
         actions: _selecting
             ? [
+                IconButton(
+                  icon: const Icon(Icons.select_all_rounded),
+                  tooltip: 'Sab select karo',
+                  onPressed: () => setState(() => _selected.addAll(
+                      _filteredList().map((c) => c.accountNo))),
+                ),
                 IconButton(
                   icon: const Icon(Icons.check_rounded),
                   tooltip: 'Voucher me dalo',
                   onPressed: () => _moveToVoucher(context, store),
                 ),
                 IconButton(
+                  icon: const Icon(Icons.delete_rounded),
+                  tooltip: 'Delete karo',
+                  onPressed: () => _deleteSelected(context, store),
+                ),
+                IconButton(
                   icon: const Icon(Icons.close_rounded),
                   tooltip: 'Cancel',
-                  onPressed: () =>
-                      setState(() => _selected.clear()),
+                  onPressed: _exitSelectionMode,
                 ),
               ]
             : [
+                IconButton(
+                  icon: const Icon(Icons.checklist_rounded),
+                  tooltip: 'Select karo',
+                  onPressed: () async {
+                    if (await requireEdit(context)) {
+                      _enterSelectionMode();
+                    }
+                  },
+                ),
                 IconButton(
                   icon: const Icon(Icons.refresh_rounded),
                   tooltip: 'Refresh',
@@ -223,6 +265,46 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
     });
   }
 
+  /// Selected customers ko delete karo (confirm ke sath).
+  Future<void> _deleteSelected(
+      BuildContext context, CustomerStore store) async {
+    if (_selected.isEmpty) {
+      showAppSnack(context, 'Pehle kuch rows select karo');
+      return;
+    }
+    if (!await requireEdit(context)) return;
+    final names = store.outstanding
+        .where((c) => _selected.contains(c.accountNo))
+        .map((c) => c.name.isEmpty ? 'A/C ${c.accountNo}' : c.name)
+        .take(5)
+        .join(', ');
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete karo?'),
+        content: Text(
+          '${_selected.length} customer delete ho jayenge:\n$names${_selected.length > 5 ? '…' : ''}\n\nYe wapas nahi aayenge!',
+          style: AppText.body,
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Nahi')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('Haan, delete karo',
+                  style: TextStyle(color: AppColors.dueRed))),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    final n = await store.deleteCustomers(Set.of(_selected));
+    if (context.mounted) {
+      showAppSnack(context, '$n customer delete ho gaye');
+      _exitSelectionMode();
+    }
+  }
+
   /// Multi-select → har customer ke liye amount + date → voucher entries.
   Future<void> _moveToVoucher(
       BuildContext context, CustomerStore store) async {
@@ -258,7 +340,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
     if (context.mounted) {
       showAppSnack(
           context, '${moving.length} customer Voucher me daal diye');
-      setState(() => _selected.clear());
+      _exitSelectionMode();
     }
   }
 
@@ -406,6 +488,7 @@ class _OutstandingScreenState extends State<OutstandingScreen> {
                   ),
           onLongPress: () async {
             if (await requireEdit(context)) {
+              _enterSelectionMode();
               setState(() => _selected.add(c.accountNo));
             }
           },

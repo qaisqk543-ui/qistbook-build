@@ -400,6 +400,27 @@ class CustomerStore extends ChangeNotifier {
     await _saveToFile();
   }
 
+  /// Customers ko permanently delete karo (bulk). Unki voucher entries
+  /// bhi saaf ho jati hain taake orphan data na rahe.
+  Future<int> deleteCustomers(Set<String> accountNos) async {
+    if (accountNos.isEmpty) return 0;
+    var n = 0;
+    _customers.removeWhere((c) {
+      if (accountNos.contains(c.accountNo)) {
+        n++;
+        return true;
+      }
+      return false;
+    });
+    if (n > 0) {
+      _vouchers.removeWhere((v) => accountNos.contains(v.accountNo));
+      await _saveToFile();
+      _sort();
+      notifyListeners();
+    }
+    return n;
+  }
+
   /// Voucher me naya entry add karo (ek customer ke kayi ho sakte hain).
   Future<void> addVoucherEntry(VoucherEntry v) async {
     _vouchers.add(v);

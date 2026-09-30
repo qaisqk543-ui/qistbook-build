@@ -44,33 +44,43 @@ class _ImportScreenState extends State<ImportScreen> {
   // Parse results (review)
   List<OutstandingRow> _rows = [];
   List<String> _failed = [];
+  List<OfficerGroupCheck> _groups = [];
+  bool? _pageTotalOk;
+  double _pageTotalDue = 0;
+  double _parsedTotalDue = 0;
   List<_StatementDraft> _statements = [];
   bool _markCleared = true;
 
   final _picker = ImagePicker();
 
+  String _rs(double v) => v.toStringAsFixed(0);
+
   // ------------------------------------------------------------ OCR helpers
 
-  Future<List<String>> _ocrImageFile(String path) async {
+  Future<List<OcrLine>> _ocrImageLines(String path) async {
     final input = InputImage.fromFilePath(path);
     final recognizer =
         TextRecognizer(script: TextRecognitionScript.latin);
     try {
       final result = await recognizer.processImage(input);
-      final lines = <_Line>[];
+      final lines = <OcrLine>[];
       for (final block in result.blocks) {
         for (final line in block.lines) {
-          final box = line.boundingBox;
-          lines.add(_Line(line.text,
-              top: box.top, left: box.left));
+          final words = <OcrWord>[];
+          for (final el in line.elements) {
+            final b = el.boundingBox;
+            if (el.text.trim().isEmpty) continue;
+            words.add(OcrWord(el.text,
+                left: b.left, right: b.right, top: b.top));
+          }
+          if (words.isEmpty) continue;
+          words.sort((a, b) => a.cx.compareTo(b.cx));
+          lines.add(OcrLine(words));
         }
       }
-      lines.sort((a, b) {
-        final dy = (a.top - b.top).abs();
-        if (dy > 12) return a.top.compareTo(b.top);
-        return a.left.compareTo(b.left);
-      });
-      return lines.map((l) => l.text).toList();
+      lines.sort((a, b) =>
+          a.words.first.top.compareTo(b.words.first.top));
+      return lines;
     } finally {
       await recognizer.close();
     }
@@ -148,28 +158,38 @@ class _ImportScreenState extends State<ImportScreen> {
       _staging = false;
       _rows = [];
       _failed = [];
+      _groups = [];
+      _pageTotalOk = null;
+      _pageTotalDue = 0;
+      _parsedTotalDue = 0;
       _statements = [];
       _status = '${paths.length} page(s) parh rahe hain…';
     });
     try {
       if (_docType == DocType.outstanding) {
-        final allLines = <String>[];
+        final pages = <List<OcrLine>>[];
         final failedPages = <int>[];
         for (var i = 0; i < paths.length; i++) {
           setState(
               () => _status = 'Page ${i + 1}/${paths.length}…');
           try {
-            allLines.addAll(await _ocrImageFile(paths[i]));
+            pages.add(await _ocrImageLines(paths[i]));
           } catch (e) {
             ErrorLog.log('Import OCR page ${i + 1}', e);
             failedPages.add(i);
           }
         }
         setState(() => _status = 'Data samajh rahe hain…');
-        final parsed = parseOutstandingLines(allLines);
+        // Column-wise parser: header se columns, phir hisab cross-check.
+        final report = parseOutstandingReport(pages);
         setState(() {
-          _rows = parsed.rows;
-          _failed = parsed.failed;
+          _rows = report.rows;
+          _failed = report.failed;
+          _groups = report.groups;
+          _pageTotalOk =
+              report.pageTotalDue > 0 ? report.totalMatches : null;
+          _pageTotalDue = report.pageTotalDue;
+          _parsedTotalDue = report.parsedTotalDue;
         });
         if (failedPages.isNotEmpty && mounted) {
           await _failedPagesDialog(failedPages, paths);
@@ -181,8 +201,8 @@ class _ImportScreenState extends State<ImportScreen> {
           setState(
               () => _status = 'Page ${i + 1}/${paths.length}…');
           try {
-            final lines = await _ocrImageFile(paths[i]);
-            final text = lines.join('\n');
+            final lines = await _ocrImageLines(paths[i]);
+            final text = lines.map((l) => l.text).join('\n');
             final tmp = parseStatementPage(text);
             drafts.add(_StatementDraft(
                 customer: tmp, rawText: text, source: paths[i]));
@@ -276,6 +296,8 @@ class _ImportScreenState extends State<ImportScreen> {
     setState(() {
       _rows = [];
       _failed = [];
+      _groups = [];
+      _pageTotalOk = null;
     });
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
@@ -586,6 +608,7 @@ class _ImportScreenState extends State<ImportScreen> {
   /// Review: save se pehle user confirm karega. Kuch ghalat ho to hata do.
   Widget _review() {
     if (_docType == DocType.outstanding) {
+      final flagged = _rows.where((r) => !r.verified).length;
       return Column(
         children: [
           Container(
@@ -599,6 +622,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     Expanded(
                         child: Text(
                             '${_rows.length} rows parh li gayin'
+                            '${flagged > 0 ? ' • $flagged me hisab ka farq ⚠' : ' • sab ka hisab mil gaya ✓'}'
                             '${_failed.isNotEmpty ? ' • ${_failed.length} check karen' : ''}',
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold))),
@@ -607,6 +631,49 @@ class _ImportScreenState extends State<ImportScreen> {
                         child: const Text('Confirm & Save')),
                   ],
                 ),
+                // Group totals ka milan (accuracy check)
+                if (_groups.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _groups
+                          .map((g) => Chip(
+                                avatar: Icon(
+                                  g.matches
+                                      ? Icons.check_circle
+                                      : Icons.warning,
+                                  size: 18,
+                                  color: g.matches
+                                      ? Colors.green
+                                      : Colors.orange,
+                                ),
+                                label: Text(
+                                  '${g.officer}: ${g.rowCount} rows'
+                                  '${g.hasTotal ? ' • Due ${_rs(g.parsedDue)}/${_rs(g.expectedDue)}' : ''}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ))
+                          .toList(),
+                    ),
+                  ),
+                if (_pageTotalOk != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _pageTotalOk!
+                          ? 'Neeche wala Total mil gaya ✓ (${_rs(_parsedTotalDue)} / ${_rs(_pageTotalDue)})'
+                          : 'Neeche wale Total me farq hai ⚠ (${_rs(_parsedTotalDue)} / ${_rs(_pageTotalDue)})',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: _pageTotalOk!
+                            ? Colors.green.shade800
+                            : Colors.orange.shade800,
+                      ),
+                    ),
+                  ),
                 CheckboxListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
@@ -627,9 +694,22 @@ class _ImportScreenState extends State<ImportScreen> {
                 final r = _rows[i];
                 return ListTile(
                   dense: true,
+                  leading: r.mathChecked
+                      ? Icon(
+                          r.verified
+                              ? Icons.check_circle
+                              : Icons.warning,
+                          color: r.verified
+                              ? Colors.green
+                              : Colors.orange,
+                          size: 22,
+                        )
+                      : null,
                   title: Text('${r.name}  •  A/C ${r.accountNo}'),
                   subtitle: Text(
-                      '${r.cell}  •  Qist Rs ${r.installment.toStringAsFixed(0)}  •  Due Rs ${r.currentDue.toStringAsFixed(0)}'),
+                      '${r.cell}  •  Qist Rs ${_rs(r.installment)}  •  Due Rs ${_rs(r.currentDue)}'
+                      '${r.verified ? '' : '\n${r.flagReason}'}'),
+                  isThreeLine: !r.verified,
                   trailing: IconButton(
                     icon: const Icon(Icons.close, size: 20),
                     onPressed: () =>
@@ -692,13 +772,6 @@ class _ImportScreenState extends State<ImportScreen> {
       ],
     );
   }
-}
-
-class _Line {
-  final String text;
-  final double top;
-  final double left;
-  _Line(this.text, {required this.top, required this.left});
 }
 
 class _StatementDraft {

@@ -23,6 +23,13 @@ class OutstandingRow {
   final double paid;
   final double currentDue;
   final String lastInstDate;
+  final int months;
+
+  /// Column parser sets these: was the "Due = OS - Paid" maths check run,
+  /// and did it pass? [flagReason] batata hai kya ghalat laga.
+  final bool mathChecked;
+  final bool verified;
+  final String flagReason;
 
   OutstandingRow({
     required this.accountNo,
@@ -38,6 +45,10 @@ class OutstandingRow {
     this.paid = 0,
     this.currentDue = 0,
     this.lastInstDate = '',
+    this.months = 0,
+    this.mathChecked = false,
+    this.verified = true,
+    this.flagReason = '',
   });
 }
 
@@ -260,6 +271,406 @@ const _knownOfficers = <String>[
     }
   }
   return (rows: rows, failed: failed);
+}
+
+// ---------------------------------------------------------------------------
+// Column-aware outstanding report parser.
+//
+// Purana line-based parser har OCR line ko alag tokta tha — table ke columns
+// ka pata nahi chalta tha. Ye parser pehle TABLE HEADER dhoondta hai
+// (Sr# | A/CNo | Acc Date | ...), header lafzon ki x-position se har column
+// ki had (boundary) banata hai, phir har data line ke lafzon ko unki
+// x-position ke hisab se SAHI column me daalta hai (column-wise parhna).
+//
+// Phir har row ka hisab cross-check hota hai:
+//    Current Due  ==  OS Amount − Paid
+// aur har recovery officer ke group ka total milaya jata hai:
+//    sum(rows' Due)  ==  group header ka Due total
+// ---------------------------------------------------------------------------
+
+/// OCR ka ek lafz + uski position (ML Kit element boundingBox se aati hai).
+class OcrWord {
+  final String text;
+  final double left;
+  final double right;
+  final double top;
+  const OcrWord(this.text,
+      {required this.left, required this.right, required this.top});
+  double get cx => (left + right) / 2;
+}
+
+/// OCR ki ek line = lafzon ki tartib-war list.
+class OcrLine {
+  final List<OcrWord> words;
+  const OcrLine(this.words);
+  String get text => words.map((w) => w.text).join(' ');
+}
+
+/// Officer group ka hisab-check: group header ka total vs parhi gayi rows.
+class OfficerGroupCheck {
+  final String officer;
+  final int rowCount;
+  final double expectedDue;
+  final double parsedDue;
+  OfficerGroupCheck({
+    required this.officer,
+    required this.rowCount,
+    required this.expectedDue,
+    required this.parsedDue,
+  });
+  bool get hasTotal => expectedDue > 0;
+  bool get matches =>
+      !hasTotal ||
+      (expectedDue - parsedDue).abs() <=
+          (expectedDue * 0.01).clamp(10.0, 500.0);
+}
+
+/// Poori report ka nateeja.
+class OutstandingReport {
+  final List<OutstandingRow> rows;
+  final List<String> failed;
+  final List<OfficerGroupCheck> groups;
+  final double pageTotalDue;
+  final double parsedTotalDue;
+  OutstandingReport({
+    required this.rows,
+    required this.failed,
+    required this.groups,
+    this.pageTotalDue = 0,
+    this.parsedTotalDue = 0,
+  });
+  bool get totalMatches =>
+      pageTotalDue <= 0 ||
+      (pageTotalDue - parsedTotalDue).abs() <=
+          (pageTotalDue * 0.01).clamp(10.0, 500.0);
+  int get flaggedCount => rows.where((r) => !r.verified).length;
+}
+
+String _norm(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+
+/// Header ke ek lafz ko column key me badlo. [afterLast] batata hai ke
+/// "Last" wala header pehle aa chuka (taake "Inst." ghalat column na pakre).
+String? _headerKey(String word, bool afterLast) {
+  final n = _norm(word);
+  if (n.isEmpty) return null;
+  if (n.contains('acno')) return 'accountNo';
+  if (n == 'sr') return 'sr';
+  if (n == 'acc') return 'accDate';
+  if (n.contains('customer')) return 'name';
+  if (n.contains('inquiry')) return 'officer';
+  if (n == 'cell') return 'cell';
+  if (n == 'item') return 'item';
+  if (n == 'price') return 'price';
+  if (n == 'balance') return 'balance';
+  // "Last" ke baad aane wale "Inst."/"Date" usi column ka hissa hain.
+  if (n == 'last') return 'lastInstDate';
+  if (n == 'install' || n == 'instal' || n == 'ment') {
+    return afterLast ? null : 'installment';
+  }
+  if (n == 'inst' || n == 'date') {
+    return null; // position se qareebi column me jayega
+  }
+  if (n == 'os') return 'osAmount';
+  if (n == 'paid') return 'paid';
+  if (n == 'current' || n == 'due') return 'currentDue';
+  if (n == 'mo' || n.startsWith('month') || n == 'mos' || n == 'hs') {
+    return 'months';
+  }
+  if (n.contains('officer')) return 'officer';
+  return null;
+}
+
+class _ColBound {
+  final String key;
+  final double x0;
+  final double x1;
+  _ColBound(this.key, this.x0, this.x1);
+  bool contains(double x) => x >= x0 && x < x1;
+}
+
+/// Ek page ki header lines se column boundaries banao.
+/// Null = is page par header nahi mila.
+List<_ColBound>? _detectColumns(List<OcrLine> page) {
+  // Header jaisi lines: kam az kam 3 maloom column lafz hon.
+  final headerWords = <OcrWord>[];
+  for (final line in page) {
+    var hits = 0;
+    var afterLast = false;
+    for (final w in line.words) {
+      final k = _headerKey(w.text, afterLast);
+      if (k != null) {
+        hits++;
+        if (k == 'lastInstDate') afterLast = true;
+      }
+    }
+    if (hits >= 3) headerWords.addAll(line.words);
+  }
+  if (headerWords.isEmpty) return null;
+
+  // Har lafz ko key do (x-tartib me, "Last" context ke sath).
+  final keyed = <MapEntry<String, OcrWord>>[];
+  var afterLast = false;
+  final sorted = List<OcrWord>.of(headerWords)
+    ..sort((a, b) => a.cx.compareTo(b.cx));
+  for (final w in sorted) {
+    final k = _headerKey(w.text, afterLast);
+    if (k == null) continue;
+    if (k == 'lastInstDate') afterLast = true;
+    // Ek key sirf ek baar — dohra lafz (jaise "Date") pehli position rakhe.
+    if (keyed.any((e) => e.key == k)) continue;
+    keyed.add(MapEntry(k, w));
+  }
+  if (keyed.length < 5) return null; // header adhoora — fallback behtar
+  keyed.sort((a, b) => a.value.cx.compareTo(b.value.cx));
+
+  // Boundaries: aas-paas ke header lafzon ke darmiyan midpoint.
+  final bounds = <_ColBound>[];
+  for (var i = 0; i < keyed.length; i++) {
+    final cx = keyed[i].value.cx;
+    final x0 = i == 0
+        ? 0.0
+        : (keyed[i - 1].value.cx + cx) / 2;
+    final x1 = i == keyed.length - 1
+        ? double.infinity
+        : (cx + keyed[i + 1].value.cx) / 2;
+    bounds.add(_ColBound(keyed[i].key, x0, x1));
+  }
+  return bounds;
+}
+
+/// Data line ke lafzon ko columns me baanto: key → merged text.
+Map<String, String> _assignColumns(OcrLine line, List<_ColBound> bounds) {
+  final parts = <String, List<String>>{};
+  for (final w in line.words) {
+    var key = 'unknown';
+    for (final b in bounds) {
+      if (b.contains(w.cx)) {
+        key = b.key;
+        break;
+      }
+    }
+    (parts[key] ??= []).add(w.text);
+  }
+  return {for (final e in parts.entries) e.key: e.value.join(' ')};
+}
+
+double _num(String s) =>
+    double.tryParse(s.replaceAll(',', '').replaceAll(RegExp(r'[^0-9.]'), '')) ??
+    0;
+
+String _digits(String s) => s.replaceAll(RegExp(r'\D'), '');
+
+/// Column-wise parse: pages (har page = OcrLine list).
+/// Header na mile to purane line-parser par fallback.
+OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
+  final rows = <OutstandingRow>[];
+  final failed = <String>[];
+  final groupRows = <String, List<double>>{};
+  final groupNames = <String, String>{};
+  final groupOrder = <String>[];
+  var currentGroup = '';
+  double pageTotalDue = 0;
+  OutstandingRow? prevRow;
+
+  for (final page in pages) {
+    final bounds = _detectColumns(page);
+    if (bounds == null) {
+      // Fallback: purana line-based parser.
+      final fb = parseOutstandingLines(page.map((l) => l.text).toList());
+      for (final r in fb.rows) {
+        rows.add(OutstandingRow(
+          accountNo: r.accountNo,
+          accDate: r.accDate,
+          name: r.name,
+          officer: currentGroup.isNotEmpty ? currentGroup : r.officer,
+          cell: r.cell,
+          item: r.item,
+          price: r.price,
+          balance: r.balance,
+          installment: r.installment,
+          osAmount: r.osAmount,
+          paid: r.paid,
+          currentDue: r.currentDue,
+          lastInstDate: r.lastInstDate,
+        ));
+      }
+      failed.addAll(fb.failed);
+      continue;
+    }
+
+    for (final line in page) {
+      final text = line.text.trim();
+      if (text.isEmpty) continue;
+      final cols = _assignColumns(line, bounds);
+
+      // Header line khud skip.
+      var headerHits = 0;
+      for (final w in line.words) {
+        if (_headerKey(w.text, false) != null) headerHits++;
+      }
+      if (headerHits >= 3) continue;
+
+      final acNo = _digits(cols['accountNo'] ?? '');
+      final isAcNo = RegExp(r'^\d{5,6}$').hasMatch(acNo);
+
+      // "Total :" wali aakhri line.
+      final firstWord = line.words.isNotEmpty
+          ? _norm(line.words.first.text)
+          : '';
+      if (firstWord == 'total') {
+        final due = _num(cols['currentDue'] ?? '');
+        if (due > 0) pageTotalDue = due;
+        continue;
+      }
+
+      final price = _num(cols['price'] ?? '');
+      final balance = _num(cols['balance'] ?? '');
+      final installment = _num(cols['installment'] ?? '');
+      final os = _num(cols['osAmount'] ?? '');
+      final paid = _num(cols['paid'] ?? '');
+      final due = _num(cols['currentDue'] ?? '');
+
+      if (!isAcNo) {
+        // Group header row? (officer ka naam + 3 totals, price/installment 0)
+        final leftText = [
+          cols['name'],
+          cols['officer'],
+          cols['accDate'],
+          cols['sr'],
+        ].where((s) => s != null && s.trim().isNotEmpty).join(' ').trim();
+        final hasTotals = (os > 0 || paid > 0 || due > 0) &&
+            price == 0 &&
+            installment == 0 &&
+            balance == 0;
+        if (hasTotals &&
+            leftText.isNotEmpty &&
+            !RegExp(r'\d{5,}').hasMatch(leftText)) {
+          final gname = leftText
+              .replaceAll(RegExp(r'\d[\d,]*'), '')
+              .replaceAll(RegExp(r'\s+'), ' ')
+              .trim();
+          if (gname.isNotEmpty) {
+            currentGroup = gname;
+            if (!groupOrder.contains(gname)) groupOrder.add(gname);
+            groupNames[gname] = gname;
+            groupRows[gname] = [os, paid, due];
+            prevRow = null;
+            continue;
+          }
+        }
+        // Naam agli line me wrap hua? (pichli row ke naam se joro)
+        final nameBit = (cols['name'] ?? '').trim();
+        if (prevRow != null &&
+            nameBit.isNotEmpty &&
+            os == 0 && paid == 0 && due == 0 && price == 0) {
+          prevRow = OutstandingRow(
+            accountNo: prevRow.accountNo,
+            accDate: prevRow.accDate,
+            name: '${prevRow.name} $nameBit'.trim(),
+            officer: prevRow.officer,
+            cell: prevRow.cell,
+            item: prevRow.item.isEmpty ? (cols['item'] ?? '').trim() : prevRow.item,
+            price: prevRow.price,
+            balance: prevRow.balance,
+            installment: prevRow.installment,
+            osAmount: prevRow.osAmount,
+            paid: prevRow.paid,
+            currentDue: prevRow.currentDue,
+            lastInstDate: prevRow.lastInstDate,
+            months: prevRow.months,
+            mathChecked: prevRow.mathChecked,
+            verified: prevRow.verified,
+            flagReason: prevRow.flagReason,
+          );
+          rows[rows.length - 1] = prevRow;
+          continue;
+        }
+        failed.add(text);
+        prevRow = null;
+        continue;
+      }
+
+      // ---- data row ----
+      final cellM = _cellRe.firstMatch(cols['cell'] ?? '');
+      final dateM = _dateRe.firstMatch(cols['lastInstDate'] ?? '');
+      final accDateM = _dateRe.firstMatch(cols['accDate'] ?? '');
+      final monthsM = RegExp(r'\d+').firstMatch(cols['months'] ?? '');
+
+      // Hisab check: Current Due == OS Amount − Paid
+      final expected = os - paid;
+      final tol = (expected.abs() * 0.01).clamp(2.0, 200.0);
+      final dueOk = (due - expected).abs() <= tol;
+      var verified = true;
+      var reason = '';
+      if (!dueOk) {
+        verified = false;
+        reason =
+            'Hisab nahi mila: OS ${_fmt(os)} − Paid ${_fmt(paid)} = ${_fmt(expected)}, Due likha ${_fmt(due)}';
+      }
+      final row = OutstandingRow(
+        accountNo: acNo,
+        accDate: accDateM?.group(0) ?? (cols['accDate'] ?? '').trim(),
+        name: (cols['name'] ?? '').trim(),
+        officer: (cols['officer'] ?? '').trim().isNotEmpty
+            ? (cols['officer'] ?? '').trim()
+            : currentGroup,
+        cell: cellM?.group(0) ?? _digits(cols['cell'] ?? ''),
+        item: (cols['item'] ?? '').trim(),
+        price: price,
+        balance: balance,
+        installment: installment,
+        osAmount: os,
+        paid: paid,
+        currentDue: due,
+        lastInstDate:
+            dateM?.group(0) ?? (cols['lastInstDate'] ?? '').trim(),
+        months: monthsM != null ? int.parse(monthsM.group(0)!) : 0,
+        mathChecked: true,
+        verified: verified,
+        flagReason: reason,
+      );
+      rows.add(row);
+      prevRow = row;
+    }
+  }
+
+  // Group reconciliation.
+  final groups = <OfficerGroupCheck>[];
+  for (final g in groupOrder) {
+    final totals = groupRows[g] ?? [0.0, 0.0, 0.0];
+    final parsedDue = rows
+        .where((r) => r.officer == g)
+        .fold(0.0, (s, r) => s + r.currentDue);
+    groups.add(OfficerGroupCheck(
+      officer: g,
+      rowCount: rows.where((r) => r.officer == g).length,
+      expectedDue: totals[2],
+      parsedDue: parsedDue,
+    ));
+  }
+  final parsedTotalDue = rows.fold(0.0, (s, r) => s + r.currentDue);
+
+  return OutstandingReport(
+    rows: rows,
+    failed: failed,
+    groups: groups,
+    pageTotalDue: pageTotalDue,
+    parsedTotalDue: parsedTotalDue,
+  );
+}
+
+String _fmt(double v) {
+  final s = v.toStringAsFixed(v.truncateToDouble() == v ? 0 : 2);
+  // hazaar separator
+  final parts = s.split('.');
+  final buf = StringBuffer();
+  final digits = parts[0].split('').reversed.toList();
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && i % 3 == 0) buf.write(',');
+    buf.write(digits[i]);
+  }
+  final int_ = buf.toString().split('').reversed.join('');
+  return parts.length > 1 ? '$int_.${parts[1]}' : int_;
 }
 
 // ---------------------------------------------------------------------------
