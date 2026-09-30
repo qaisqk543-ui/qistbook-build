@@ -1,6 +1,7 @@
 /// Local login / signup / forgot-password, fully on-device.
-/// Users live in a small separate DB (app_users.db). Har user ka apna
-/// data alag file me hota hai: qistbook_<uid>.db
+/// Users live in a JSON file (app_users.json). Har user ka apna data
+/// alag file me hota hai: qistbook_<uid>.json
+/// SQLite se hata diya — kuch phones par openDatabase atak jata tha.
 library;
 
 import 'dart:convert';
@@ -9,8 +10,8 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart';
 
 import '../models/user.dart';
 import 'subscription_service.dart';
@@ -25,28 +26,48 @@ class AuthResult {
 
 class AuthService {
   static const _sessionKey = 'session_uid';
-  static const _legacyDbName = 'kistbook.db';
 
-  Database? _db;
+  final List<AppUser> _users = [];
   String? _sessionUid;
   AppUser? _currentUser;
 
   AppUser? get currentUser => _currentUser;
 
+  Future<File> _usersFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File(p.join(dir.path, 'app_users.json'));
+  }
+
+  Future<void> _loadUsers() async {
+    _users.clear();
+    try {
+      final file = await _usersFile();
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        final data = jsonDecode(content) as List;
+        for (final m in data) {
+          try {
+            _users.add(AppUser.fromMap(m as Map<String, dynamic>));
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveUsers() async {
+    try {
+      final file = await _usersFile();
+      final data = _users.map((u) => u.toMap()).toList();
+      await file.writeAsString(jsonEncode(data));
+    } catch (_) {}
+  }
+
   Future<void> init() async {
-    final dir = await getDatabasesPath();
-    _db = await openDatabase(
-      p.join(dir, 'app_users.db'),
-      version: 1,
-      onCreate: (db, _) async {
-        await db.execute(
-            'CREATE TABLE users(id TEXT PRIMARY KEY, data TEXT)');
-      },
-    );
+    await _loadUsers();
     final prefs = await SharedPreferences.getInstance();
     _sessionUid = prefs.getString(_sessionKey);
     if (_sessionUid != null) {
-      _currentUser = await _findById(_sessionUid!);
+      _currentUser = _findById(_sessionUid!);
       if (_currentUser == null) {
         _sessionUid = null;
         await prefs.remove(_sessionKey);
@@ -68,32 +89,29 @@ class AuthService {
   }
 
   Future<List<AppUser>> _all() async {
-    final rows = await _db!.query('users');
-    return rows
-        .map((r) => AppUser.fromMap(
-            jsonDecode(r['data'] as String) as Map<String, dynamic>))
-        .toList();
+    return List<AppUser>.from(_users);
   }
 
   Future<void> _save(AppUser u) async {
-    await _db!.insert(
-      'users',
-      {'id': u.id, 'data': jsonEncode(u.toMap())},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    final i = _users.indexWhere((e) => e.id == u.id);
+    if (i >= 0) {
+      _users[i] = u;
+    } else {
+      _users.add(u);
+    }
+    await _saveUsers();
   }
 
-  Future<AppUser?> _findById(String id) async {
-    final rows =
-        await _db!.query('users', where: 'id = ?', whereArgs: [id]);
-    if (rows.isEmpty) return null;
-    return AppUser.fromMap(
-        jsonDecode(rows.first['data'] as String) as Map<String, dynamic>);
+  AppUser? _findById(String id) {
+    for (final u in _users) {
+      if (u.id == id) return u;
+    }
+    return null;
   }
 
   Future<AppUser?> findByIdentifier(String identifier) async {
     final key = identifier.trim().toLowerCase();
-    for (final u in await _all()) {
+    for (final u in _users) {
       if (u.email.trim().toLowerCase() == key ||
           u.phone.replaceAll(RegExp(r'\D'), '') ==
               key.replaceAll(RegExp(r'\D'), '')) {
@@ -107,41 +125,17 @@ class AuthService {
   bool _hasAnyUserCached = false;
 
   Future<bool> checkHasAnyUser() async {
-    final rows =
-        await _db!.rawQuery('SELECT COUNT(*) AS n FROM users');
-    _hasAnyUserCached = ((rows.first['n'] as int?) ?? 0) > 0;
+    _hasAnyUserCached = _users.isNotEmpty;
     return _hasAnyUserCached;
   }
 
-  /// Legacy (v1.0.7 tak) single DB: does it exist and have customers?
+  /// Legacy (v1.0.7 tak) — ab JSON hai, purana SQLite data migrate nahi hota.
   Future<bool> legacyDbHasData() async {
-    try {
-      final dir = await getDatabasesPath();
-      final file = File(p.join(dir, _legacyDbName));
-      if (!await file.exists()) return false;
-      final db = await openDatabase(file.path, readOnly: true);
-      try {
-        final rows =
-            await db.rawQuery('SELECT COUNT(*) AS n FROM customers');
-        return ((rows.first['n'] as int?) ?? 0) > 0;
-      } finally {
-        await db.close();
-      }
-    } catch (_) {
-      return false;
-    }
+    return false;
   }
 
-  /// Adopt the legacy DB as this user's DB (rename file). Call right after
-  /// first signup when legacy data was found. Old file must not be open.
-  Future<void> adoptLegacyDb(String uid) async {
-    final dir = await getDatabasesPath();
-    final from = File(p.join(dir, _legacyDbName));
-    final to = File(p.join(dir, 'qistbook_$uid.db'));
-    if (await from.exists() && !await to.exists()) {
-      await from.rename(to.path);
-    }
-  }
+  /// Legacy — ab kuch nahi karna.
+  Future<void> adoptLegacyDb(String uid) async {}
 
   static String userDbName(String uid) => 'qistbook_$uid.db';
 
@@ -273,10 +267,10 @@ class AuthService {
     await prefs.remove(_sessionKey);
   }
 
-  /// Refresh current user from DB (e.g. after profile edit elsewhere).
+  /// Refresh current user (e.g. after profile edit elsewhere).
   Future<void> reloadCurrent() async {
     if (_sessionUid != null) {
-      _currentUser = await _findById(_sessionUid!);
+      _currentUser = _findById(_sessionUid!);
     }
   }
 }
