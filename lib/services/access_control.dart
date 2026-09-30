@@ -15,7 +15,8 @@ class AccessControl extends ChangeNotifier {
   String? get uid => _uid;
 
   /// true = sirf dekh sakte hain, edit nahi.
-  bool readOnly = true;
+  /// paymentsEnabled=false (free mode) ho to shuru se hi false.
+  bool readOnly = SubscriptionService.paymentsEnabled;
 
   bool get canEdit => !readOnly;
 

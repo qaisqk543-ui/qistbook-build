@@ -144,6 +144,11 @@ class _KistBookAppState extends State<KistBookApp> {
         } catch (_) {}
       }
       final uid = user?.id ?? defaultUser.id;
+      // AccessControl init — paymentsEnabled=false ho to readOnly=false
+      // (free mode). Ye missing tha v1.0.21 me → "subscription daalo" ata tha.
+      try {
+        await _access?.init(uid).timeout(const Duration(seconds: 10));
+      } catch (_) {}
       // Data background me load karo.
       try {
         await _store?.init(uid).timeout(const Duration(seconds: 15));
