@@ -12,7 +12,9 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:provider/provider.dart';
@@ -124,24 +126,100 @@ class _ImportScreenState extends State<ImportScreen> {
 
   // ------------------------------------------------------------ input methods
 
-  /// Method 1: scan pages with the camera, one after another.
-  Future<void> _scanPage() async {
+  /// Table OCR pipeline — Step 1-4: document detection, perspective
+  /// correction, crop aur enhancement. ML Kit Document Scanner ye sab
+  /// on-device karta hai (tasveer seedhi, saaf, table par cropped).
+  /// Phir har page: rasterize → OCR → column parser (table rows/columns).
+  Future<void> _scanDocument() async {
+    DocumentScanner? scanner;
+    try {
+      scanner = DocumentScanner(
+        options: DocumentScannerOptions(
+          documentFormats: const {DocumentFormat.jpeg},
+          pageLimit: 20,
+          mode: ScannerMode.full,
+          isGalleryImport: true,
+        ),
+      );
+      final result = await scanner.scanDocument();
+      final images = result.images ?? [];
+      if (images.isEmpty) return; // user ne cancel kiya
+      setState(() {
+        _busy = true;
+        _status = '${images.length} page(s) scan ho gaye — parh rahe hain…';
+      });
+      await _processImages(images);
+    } catch (e) {
+      // Scanner na chale (purana phone / Play Services nahi) → purana camera.
+      debugPrint('QistBook: document scanner fail, camera fallback: $e');
+      await _scanPageLegacy();
+    } finally {
+      try {
+        await scanner?.close();
+      } catch (_) {}
+    }
+  }
+
+  /// Image preprocessing (pipeline step): gallery/photo ko OCR ke liye
+  /// tayaar karo — grayscale + contrast normalize (saaye/kam roshni me
+  /// behtar parhai). Scanner ki tasveeren pehle se saaf hoti hain.
+  Future<String> _enhanceImage(String path) async {
+    try {
+      final bytes = await File(path).readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return path;
+      var out = img.grayscale(decoded);
+      out = img.normalize(out, min: 0, max: 255);
+      final tmp = Directory.systemTemp;
+      final f = File(
+          '${tmp.path}/kistbook_enh_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await f.writeAsBytes(img.encodeJpg(out, quality: 95));
+      return f.path;
+    } catch (e) {
+      debugPrint('QistBook: enhance fail, original: $e');
+      return path;
+    }
+  }
+
+  /// Method 1 (purana fallback): sadah camera photo.
+  Future<void> _scanPageLegacy() async {
     final x = await _picker.pickImage(
         source: ImageSource.camera, imageQuality: 95);
     if (x != null) {
       setState(() {
-        _staging = true;
-        _stagedPaths.add(x.path);
+        _busy = true;
+        _status = 'Photo saaf kar rahe hain…';
       });
-    } else if (_stagedPaths.isEmpty) {
-      setState(() => _staging = false);
+      final enhanced = await _enhanceImage(x.path);
+      if (!mounted) return;
+      setState(() => _status = 'Parh rahe hain…');
+      await _processImages([enhanced]);
     }
   }
 
-  /// Method 2: photos from the gallery (multi-select).
+  /// Method 1: scan pages with the camera, one after another.
+  Future<void> _scanPage() async {
+    // Naya pipeline: document scanner (auto-detect + seedha + crop).
+    await _scanDocument();
+  }
+
+  /// Method 2: photos from the gallery (multi-select) — preprocessing ke sath.
   Future<void> _pickGallery() async {
     final xs = await _picker.pickMultiImage(imageQuality: 95);
-    if (xs.isNotEmpty) _processImages(xs.map((e) => e.path).toList());
+    if (xs.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _status = 'Photos saaf kar rahe hain…';
+    });
+    final enhanced = <String>[];
+    for (var i = 0; i < xs.length; i++) {
+      if (mounted) {
+        setState(() => _status = 'Photo ${i + 1}/${xs.length} saaf ho rahi hai…');
+      }
+      enhanced.add(await _enhanceImage(xs[i].path));
+    }
+    if (!mounted) return;
+    await _processImages(enhanced);
   }
 
   /// Method 3: PDF file with multiple customers.
@@ -464,8 +542,8 @@ class _ImportScreenState extends State<ImportScreen> {
         const SizedBox(height: 8),
         _methodButton(
           icon: Icons.document_scanner,
-          title: 'Scan karo (camera)',
-          subtitle: 'Ek ya zyada pages — ek ke baad ek scan karen',
+          title: 'Document scan karo',
+          subtitle: 'Auto-detect + seedha + crop — ek ya zyada pages',
           onPressed: _scanPage,
         ),
         const SizedBox(height: 8),
