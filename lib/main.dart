@@ -110,48 +110,35 @@ class _KistBookAppState extends State<KistBookApp> {
   void initState() {
     super.initState();
     // v1.0.21+: KOI boot wait nahi — Home FORAN dikhegi.
-    // Default user + empty store synchronously banao (koi await nahi).
-    // Asli data background me load hoga.
-    final defaultUser = AppUser(
-      id: 'default-user',
-      name: 'Qais',
-      createdAt: DateTime.now().toIso8601String(),
-    );
-    _store = CustomerStore();
-    _access = AccessControl();
+    // v1.0.29: naya phone / fresh install (koi user nahi) → seedha account
+    // banao screen. Purani auto-"Qais" wali harkat khatam — taake app share
+    // karne par har user apna account banaye. Existing users: bilkul pehle
+    // jaisa, koi farq nahi.
+    final existingUser = widget.auth.currentUser ?? widget.auth.firstUser;
+    if (existingUser == null) {
+      _store = null;
+      _access = null;
+    } else {
+      _store = CustomerStore();
+      _access = AccessControl();
+      // Background me asli setup karo (await nahi — UI block nahi hogi).
+      _backgroundBoot(existingUser);
+    }
     _loading = false;
-    // Background me asli setup karo (await nahi — UI block nahi hogi).
-    _backgroundBoot(defaultUser);
   }
 
   /// Background boot — UI ko kabhi block nahi karegi.
-  Future<void> _backgroundBoot(AppUser defaultUser) async {
+  /// Sirf existing user ke liye chalti hai (fresh install par nahi).
+  Future<void> _backgroundBoot(AppUser user) async {
     try {
-      // Asli user dhoondo ya banao.
-      var user = widget.auth.currentUser ?? widget.auth.firstUser;
-      if (user == null) {
-        try {
-          final res = await widget.auth
-              .signup(
-                name: 'Qais',
-                email: '',
-                phone: '03000000000',
-                password: 'qistbook',
-                confirm: 'qistbook',
-              )
-              .timeout(const Duration(seconds: 10));
-          if (res.ok) user = res.user;
-        } catch (_) {}
-      }
-      final uid = user?.id ?? defaultUser.id;
       // AccessControl init — paymentsEnabled=false ho to readOnly=false
       // (free mode). Ye missing tha v1.0.21 me → "subscription daalo" ata tha.
       try {
-        await _access?.init(uid).timeout(const Duration(seconds: 10));
+        await _access?.init(user.id).timeout(const Duration(seconds: 10));
       } catch (_) {}
       // Data background me load karo.
       try {
-        await _store?.init(uid).timeout(const Duration(seconds: 15));
+        await _store?.init(user.id).timeout(const Duration(seconds: 15));
       } catch (_) {}
       if (mounted) setState(() {});
     } catch (_) {}
@@ -195,20 +182,10 @@ class _KistBookAppState extends State<KistBookApp> {
     }
     var user = widget.auth.currentUser;
     // v1.0.20+: Login khatam — koi session na ho to pehle user ko auto-login.
-    // Qais akela user hai, app free hai — login screen ki zaroorat nahi.
+    // v1.0.29: fresh install par auto-"Qais" banana BAND — user khud account
+    // banayega (AuthScreen). Sirf existing user auto-login hoga.
     if (user == null) {
       user = widget.auth.firstUser;
-      if (user == null) {
-        _setBootStep('Pehli dafa setup ho raha hai…');
-        final res = await widget.auth.signup(
-          name: 'Qais',
-          email: '',
-          phone: '03000000000',
-          password: 'qistbook',
-          confirm: 'qistbook',
-        );
-        if (res.ok) user = res.user;
-      }
     }
     if (user != null) {
       await _openStore(user);
@@ -375,7 +352,12 @@ class _KistBookAppState extends State<KistBookApp> {
               home = (store != null && access != null)
                   ? HomeShell(store: store, onLogout: _onLogout)
                   : AuthScreen(
-                      onDone: _onAuthDone, legacyDataFound: _legacyFound);
+                      onDone: _onAuthDone,
+                      legacyDataFound: _legacyFound,
+                      // Koi user hi nahi (fresh install) → seedha signup.
+                      // Logout ke baad (users maujood) → login mode.
+                      startInSignup: widget.auth.firstUser == null,
+                    );
             }
 
             Widget app = MaterialApp(

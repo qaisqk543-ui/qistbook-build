@@ -11,6 +11,9 @@ class AuthScreen extends StatefulWidget {
   /// Pehli dafa legacy data mila ho to true → signup par note dikhega.
   final bool legacyDataFound;
 
+  /// Fresh install (koi user nahi) → seedha "Naya account banayen" mode.
+  final bool startInSignup;
+
   /// Login/signup kamyab hone par call hota hai.
   final VoidCallback onDone;
 
@@ -18,6 +21,7 @@ class AuthScreen extends StatefulWidget {
     super.key,
     required this.onDone,
     this.legacyDataFound = false,
+    this.startInSignup = false,
   });
 
   @override
@@ -36,6 +40,12 @@ class _AuthScreenState extends State<AuthScreen> {
   final _passCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
   bool _showPass = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.startInSignup) _mode = _Mode.signup;
+  }
 
   @override
   void dispose() {
