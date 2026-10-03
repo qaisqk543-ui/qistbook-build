@@ -1,16 +1,13 @@
-/// Reminders: SMS sent directly from the phone (Android) + one-tap WhatsApp.
-/// WhatsApp has no free auto-send API — fully automatic sending would violate
-/// WhatsApp's terms and risk a number ban. So WhatsApp is "one tap":
-/// the chat opens with the message pre-filled, the user presses send.
+/// Reminders: SMS via system SMS app (intent) + one-tap WhatsApp.
+/// Play-safe: SEND_SMS permission hata di — app khud SMS nahi bhejti.
+/// SMS button dabane par phone ki SMS app khulti hai (message pre-filled),
+/// user khud Send dabata hai. WhatsApp bhi one-tap hai.
 library;
 
-import 'package:telephony/telephony.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/customer.dart';
 import 'payment_accounts.dart';
-
-final _telephony = Telephony.instance;
 
 String dueReminderMessage(Customer c, {bool urdu = true}) {
   final due = c.currentDue.toStringAsFixed(0);
@@ -49,19 +46,12 @@ Future<String> dueReminderMessageWithAccounts(Customer c) async {
   return '$base\n\nAdaigi ke liye:\n$acc';
 }
 
-/// Sends an SMS straight from the device. Returns true on success.
-/// Requires SEND_SMS permission (Android). On iOS this path is unavailable —
-/// call [openSmsApp] instead.
+/// SMS reminder via system SMS app (Play-safe, koi permission nahi chahiye).
+/// SMS app khulti hai message pre-filled ke sath — user Send dabata hai.
+/// Hamesha true (app khul gayi) — bhejna user ke haath me hai.
 Future<bool> sendSms(String phone, String message) async {
-  try {
-    final granted =
-        await _telephony.requestPhoneAndSmsPermissions ?? false;
-    if (!granted) return false;
-    await _telephony.sendSms(to: phone, message: message);
-    return true;
-  } catch (_) {
-    return false;
-  }
+  await openSmsApp(phone, message);
+  return true;
 }
 
 /// Opens the SMS app with a pre-filled message (iOS-safe fallback).

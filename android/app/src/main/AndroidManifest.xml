@@ -1,6 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- SMS: auto-send due reminders straight from the phone (send only) -->
-    <uses-permission android:name="android.permission.SEND_SMS"/>
     <!-- Camera + gallery: scan printed pages / pick photos & PDFs -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>

@@ -572,13 +572,11 @@ class ReminderDialog extends StatelessWidget {
           label: const Text('SMS'),
           onPressed: () async {
             final msg = await dueReminderMessageWithAccounts(c);
-            final ok = await sendSms(c.cell, msg);
+            await sendSms(c.cell, msg);
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                    content: Text(ok
-                        ? 'SMS bhej diya gaya'
-                        : 'SMS nahi bheja ja saka — permission check karo')),
+                const SnackBar(
+                    content: Text('SMS app khul gayi — Send dabao')),
               );
             }
             if (!context.mounted) return;

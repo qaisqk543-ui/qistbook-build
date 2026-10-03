@@ -565,11 +565,10 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
 
   Future<void> _sendSms(BuildContext context) async {
     final msg = await dueReminderMessageWithAccounts(c);
-    final ok = await sendSms(c.cell, msg);
+    await sendSms(c.cell, msg);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:
-              Text(ok ? 'SMS sent.' : 'SMS failed — check permission.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('SMS app khul gayi — Send dabao.')));
     }
   }
 
