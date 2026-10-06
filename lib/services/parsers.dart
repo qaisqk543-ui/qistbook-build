@@ -55,7 +55,7 @@ class OutstandingRow {
 double _toDouble(String s) =>
     double.tryParse(s.replaceAll(',', '').trim()) ?? 0;
 
-final _cellRe = RegExp(r'03\d{9}');
+final _cellRe = RegExp(r'03\d{2}[-\s]?\d{7}');
 final _dateRe = RegExp(r'\d{1,2}-[A-Za-z]{3}-\d{2,4}');
 
 /// Parse a single OCR text line from the outstanding table.
@@ -71,9 +71,10 @@ OutstandingRow? parseOutstandingRow(String line) {
 
 /// Strict parser (original logic).
 OutstandingRow? _parseOutstandingRowStrict(String line) {
+  line = _fixOcrDigits(line);
   final cellMatch = _cellRe.firstMatch(line);
   if (cellMatch == null) return null;
-  final cell = cellMatch.group(0)!;
+  final cell = _normCell(cellMatch.group(0)!);
 
   final left = line.substring(0, cellMatch.start).trim();
   final right = line.substring(cellMatch.end).trim();
@@ -168,8 +169,9 @@ OutstandingRow? _parseOutstandingRowLenient(String line) {
   final acNo = acMatch.group(0)!;
 
   // Cell dhoondo (optional).
-  final cellMatch = _cellRe.firstMatch(trimmed);
-  final cell = cellMatch?.group(0) ?? '';
+  final cellMatch = _cellRe.firstMatch(_fixOcrDigits(trimmed));
+  final cell =
+      cellMatch != null ? _normCell(cellMatch.group(0)!) : '';
 
   // Dates dhoondo.
   final dates = _dateRe.allMatches(trimmed).map((m) => m.group(0)!).toList();
@@ -454,11 +456,22 @@ Map<String, String> _assignColumns(OcrLine line, List<_ColBound> bounds) {
   return {for (final e in parts.entries) e.key: e.value.join(' ')};
 }
 
-double _num(String s) =>
-    double.tryParse(s.replaceAll(',', '').replaceAll(RegExp(r'[^0-9.]'), '')) ??
+double _num(String s) => double.tryParse(_fixOcrDigits(s)
+        .replaceAll(',', '')
+        .replaceAll(RegExp(r'[^0-9.]'), '')) ??
     0;
 
-String _digits(String s) => s.replaceAll(RegExp(r'\D'), '');
+String _digits(String s) =>
+    _fixOcrDigits(s).replaceAll(RegExp(r'\D'), '');
+
+/// OCR typo fix: 'O'/'o' ko '0' banao — SIRF jab digit ke sath jura ho
+/// ("03O1234567" → "0301234567", "55O00" → "55000").
+/// Naamon ko haath nahi lagta ("Faiz Rasool" waisa hi rehta hai).
+String _fixOcrDigits(String s) =>
+    s.replaceAll(RegExp(r'(?<=\d)[oO]|[oO](?=\d)'), '0');
+
+/// Pakistani cell: 03xx-xxxxxxx (dash/space ke sath bhi).
+String _normCell(String s) => s.replaceAll(RegExp(r'[-\s]'), '');
 
 /// Header ki agli line me bacha-khucha tukra ("Date", "hs", "Amount" jaisa)
 /// — ye data nahi, skip karo.
@@ -632,7 +645,8 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
       }
 
       // ---- data row ----
-      final cellM = _cellRe.firstMatch(cols['cell'] ?? '');
+      final cellCol = _fixOcrDigits(cols['cell'] ?? '');
+      final cellM = _cellRe.firstMatch(cellCol);
       final dateM = _dateRe.firstMatch(cols['lastInstDate'] ?? '');
       final accDateM = _dateRe.firstMatch(cols['accDate'] ?? '');
       final monthsM = RegExp(r'\d+').firstMatch(cols['months'] ?? '');
@@ -655,7 +669,9 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
         officer: (cols['officer'] ?? '').trim().isNotEmpty
             ? (cols['officer'] ?? '').trim()
             : currentGroup,
-        cell: cellM?.group(0) ?? _digits(cols['cell'] ?? ''),
+        cell: cellM != null
+            ? _normCell(cellM.group(0)!)
+            : _digits(cols['cell'] ?? ''),
         item: (cols['item'] ?? '').trim(),
         price: price,
         balance: balance,

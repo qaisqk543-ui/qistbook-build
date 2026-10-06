@@ -66,20 +66,46 @@ class _ImportScreenState extends State<ImportScreen> {
         TextRecognizer(script: TextRecognitionScript.latin);
     try {
       final result = await recognizer.processImage(input);
-      final lines = <OcrLine>[];
+      // Table OCR fix: ML Kit ki apni line-grouping par bharosa nahi —
+      // kabhi do rows ek line me jor deta hai, kabhi ek row tor deta hai
+      // (columns vertically parhne wali ghalti). Saare elements ikattha
+      // karke Y-coordinate (14px tolerance) se rows banao, phir har row
+      // left-to-right sort karo.
+      final elems = <OcrWord>[];
       for (final block in result.blocks) {
         for (final line in block.lines) {
-          final words = <OcrWord>[];
           for (final el in line.elements) {
             final b = el.boundingBox;
             if (el.text.trim().isEmpty) continue;
-            words.add(OcrWord(el.text,
+            elems.add(OcrWord(el.text,
                 left: b.left, right: b.right, top: b.top));
           }
-          if (words.isEmpty) continue;
-          words.sort((a, b) => a.cx.compareTo(b.cx));
-          lines.add(OcrLine(words));
         }
+      }
+      final rows = <List<OcrWord>>[];
+      final rowTops = <double>[];
+      for (final e in elems) {
+        var placed = -1;
+        for (var i = 0; i < rows.length; i++) {
+          if ((rowTops[i] - e.top).abs() < 14.0) {
+            placed = i;
+            break;
+          }
+        }
+        if (placed >= 0) {
+          rows[placed].add(e);
+          final r = rows[placed];
+          rowTops[placed] =
+              r.map((w) => w.top).reduce((a, b) => a + b) / r.length;
+        } else {
+          rows.add([e]);
+          rowTops.add(e.top);
+        }
+      }
+      final lines = <OcrLine>[];
+      for (final r in rows) {
+        r.sort((a, b) => a.cx.compareTo(b.cx));
+        lines.add(OcrLine(r));
       }
       lines.sort((a, b) =>
           a.words.first.top.compareTo(b.words.first.top));
