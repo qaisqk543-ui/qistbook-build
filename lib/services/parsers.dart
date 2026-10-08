@@ -456,10 +456,19 @@ Map<String, String> _assignColumns(OcrLine line, List<_ColBound> bounds) {
   return {for (final e in parts.entries) e.key: e.value.join(' ')};
 }
 
-double _num(String s) => double.tryParse(_fixOcrDigits(s)
-        .replaceAll(',', '')
-        .replaceAll(RegExp(r'[^0-9.]'), '')) ??
-    0;
+double _num(String s) {
+  var fixed = _fixOcrDigits(s);
+  final tokens =
+      fixed.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+  // Hifazati jaal: agar column me saare tokens ek jaise hon ("7150 7150" —
+  // koi duplicate element dedup se bach gaya) to sirf ek lo, warna neeche
+  // space hatne se "71507150" ban jata hai. Alag-alag tokens ko haath nahi.
+  if (tokens.length > 1 && tokens.every((t) => t == tokens.first)) {
+    fixed = tokens.first;
+  }
+  return double.tryParse(fixed.replaceAll(',', '').replaceAll(RegExp(r'[^0-9.]'), '')) ??
+      0;
+}
 
 String _digits(String s) =>
     _fixOcrDigits(s).replaceAll(RegExp(r'\D'), '');
@@ -580,12 +589,43 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
         continue;
       }
 
-      final price = _num(cols['price'] ?? '');
-      final balance = _num(cols['balance'] ?? '');
-      final installment = _num(cols['installment'] ?? '');
-      final os = _num(cols['osAmount'] ?? '');
-      final paid = _num(cols['paid'] ?? '');
-      final due = _num(cols['currentDue'] ?? '');
+      var price = _num(cols['price'] ?? '');
+      var balance = _num(cols['balance'] ?? '');
+      var installment = _num(cols['installment'] ?? '');
+      var os = _num(cols['osAmount'] ?? '');
+      var paid = _num(cols['paid'] ?? '');
+      var due = _num(cols['currentDue'] ?? '');
+
+      // Column se saari raqmein 0 ayin (columns misalign ya khaali) to strict
+      // line-parser ko doosra mauqa do — cell anchor se nikalta hai.
+      if (price == 0 &&
+          balance == 0 &&
+          installment == 0 &&
+          os == 0 &&
+          paid == 0 &&
+          due == 0) {
+        final retry = _parseOutstandingRowStrict(text);
+        final hasMoney = retry != null &&
+            (retry.price > 0 ||
+                retry.balance > 0 ||
+                retry.installment > 0 ||
+                retry.osAmount > 0 ||
+                retry.paid > 0 ||
+                retry.currentDue > 0);
+        if (hasMoney) {
+          price = retry!.price;
+          balance = retry.balance;
+          installment = retry.installment;
+          os = retry.osAmount;
+          paid = retry.paid;
+          due = retry.currentDue;
+        } else {
+          // Jhooti zero-row banane se behtar: na parhi gayi me dalo.
+          failed.add(text);
+          prevRow = null;
+          continue;
+        }
+      }
 
       if (!isAcNo) {
         // Group header row? (officer ka naam + 3 totals, price/installment 0)
@@ -661,6 +701,10 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
         verified = false;
         reason =
             'Hisab nahi mila: OS ${_fmt(os)} − Paid ${_fmt(paid)} = ${_fmt(expected)}, Due likha ${_fmt(due)}';
+      } else if (os == 0 && paid == 0 && due == 0) {
+        // 0 == 0-0 "mil gaya" jhoota green tick tha — raqam parhi hi nahi gayi.
+        verified = false;
+        reason = 'Raqam nahi parhi gayi — dobara scan karein ya khud check karein';
       }
       final row = OutstandingRow(
         accountNo: acNo,

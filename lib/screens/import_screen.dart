@@ -82,9 +82,37 @@ class _ImportScreenState extends State<ImportScreen> {
           }
         }
       }
+      // Duplicate elements hatao: ML Kit aksar ek hi printed lafz ko do
+      // overlapping boxes me do baar deta hai ("7150" + "7150"). Bina dedup
+      // ke ye column me "7150 7150" jur kar _num me "71507150" ban jata tha
+      // (screenshot wala bug). Markaz qareeb + text milta = duplicate.
+      final deduped = <OcrWord>[];
+      for (final e in elems) {
+        var dupIdx = -1;
+        for (var i = 0; i < deduped.length; i++) {
+          final d = deduped[i];
+          final te = e.text.trim(), td = d.text.trim();
+          if (!(te == td || te.contains(td) || td.contains(te))) continue;
+          final w = (e.right - e.left) < (d.right - d.left)
+              ? (e.right - e.left)
+              : (d.right - d.left);
+          if ((e.cx - d.cx).abs() > w * 0.6) continue;
+          if ((e.top - d.top).abs() > 14.0) continue;
+          dupIdx = i;
+          break;
+        }
+        if (dupIdx >= 0) {
+          // Lamba (mukammal) wala rakho: "4100" rahe, "410" jaye.
+          if (e.text.trim().length > deduped[dupIdx].text.trim().length) {
+            deduped[dupIdx] = e;
+          }
+        } else {
+          deduped.add(e);
+        }
+      }
       final rows = <List<OcrWord>>[];
       final rowTops = <double>[];
-      for (final e in elems) {
+      for (final e in deduped) {
         var placed = -1;
         for (var i = 0; i < rows.length; i++) {
           if ((rowTops[i] - e.top).abs() < 14.0) {
