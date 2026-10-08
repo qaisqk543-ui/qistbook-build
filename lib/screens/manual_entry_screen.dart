@@ -13,7 +13,17 @@ import 'import_screen.dart' show DocType;
 
 class ManualEntryScreen extends StatefulWidget {
   final DocType docType;
-  const ManualEntryScreen({super.key, required this.docType});
+
+  /// Na parhi gayi line ko review screen se theek karne ke liye: andaza
+  /// lagaya hua row pehle se bhar do.
+  final OutstandingRow? prefill;
+
+  /// true: store me save NA karo — row wapas do taake review list me jaye
+  /// aur Confirm & Save par sab ke sath save ho.
+  final bool returnRow;
+
+  const ManualEntryScreen(
+      {super.key, required this.docType, this.prefill, this.returnRow = false});
 
   @override
   State<ManualEntryScreen> createState() => _ManualEntryScreenState();
@@ -25,6 +35,29 @@ class _ManualEntryScreenState extends State<ManualEntryScreen> {
 
   TextEditingController _ctl(String key) =>
       _c.putIfAbsent(key, () => TextEditingController());
+
+  String _rs(double v) =>
+      v.toStringAsFixed(v.truncateToDouble() == v ? 0 : 2);
+
+  @override
+  void initState() {
+    super.initState();
+    final p = widget.prefill;
+    if (p != null && widget.docType == DocType.outstanding) {
+      _ctl('accountNo').text = p.accountNo;
+      _ctl('name').text = p.name;
+      _ctl('cell').text = p.cell;
+      _ctl('item').text = p.item;
+      _ctl('price').text = p.price > 0 ? _rs(p.price) : '';
+      _ctl('balance').text = p.balance > 0 ? _rs(p.balance) : '';
+      _ctl('installment').text = p.installment > 0 ? _rs(p.installment) : '';
+      _ctl('osAmount').text = p.osAmount > 0 ? _rs(p.osAmount) : '';
+      _ctl('paid').text = p.paid > 0 ? _rs(p.paid) : '';
+      _ctl('currentDue').text = p.currentDue > 0 ? _rs(p.currentDue) : '';
+      _ctl('lastInstDate').text = p.lastInstDate;
+      _ctl('officer').text = p.officer;
+    }
+  }
 
   @override
   void dispose() {
@@ -56,17 +89,19 @@ class _ManualEntryScreenState extends State<ManualEntryScreen> {
               padding: const EdgeInsets.all(10),
               margin: const EdgeInsets.only(bottom: 12),
               color: Colors.orange.shade50,
-              child: const Text(
-                'Ye aakhri option hai — pehle PDF ya scan try karen. '
-                'A/C No. sahi likhen, usi se record match hoga.',
-                style: TextStyle(fontSize: 13),
+              child: Text(
+                widget.returnRow
+                    ? 'Neeche line ka data theek karen — Save dabane par ye wapas review list me ajayegi, phir Confirm & Save par sab ke sath save hogi.'
+                    : 'Ye aakhri option hai — pehle PDF ya scan try karen. '
+                        'A/C No. sahi likhen, usi se record match hoga.',
+                style: const TextStyle(fontSize: 13),
               ),
             ),
             if (isOutstanding) ..._outstandingFields() else ..._statementFields(),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               icon: const Icon(Icons.save),
-              label: const Text('Save karo'),
+              label: Text(widget.returnRow ? 'Theek hai — list me dalo' : 'Save karo'),
               style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.all(14)),
               onPressed: _save,
@@ -151,7 +186,6 @@ class _ManualEntryScreenState extends State<ManualEntryScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    final store = context.read<CustomerStore>();
     if (widget.docType == DocType.outstanding) {
       final row = OutstandingRow(
         accountNo: _txt('accountNo'),
@@ -167,6 +201,13 @@ class _ManualEntryScreenState extends State<ManualEntryScreen> {
         lastInstDate: _txt('lastInstDate'),
         officer: _txt('officer'),
       );
+      // Review se "theek karo": row wapas do, save Confirm & Save par hoga.
+      if (widget.returnRow) {
+        if (!mounted) return;
+        Navigator.of(context).pop(row);
+        return;
+      }
+      final store = context.read<CustomerStore>();
       final res = await store.applyOutstandingRow(row);
       await store.logImport({
         'type': 'manual-outstanding',
@@ -180,6 +221,7 @@ class _ManualEntryScreenState extends State<ManualEntryScreen> {
               ? 'Record update ho gaya.'
               : 'Naya record ban gaya.')));
     } else {
+      final store = context.read<CustomerStore>();
       final c = Customer(accountNo: _txt('accountNo'))
         ..name = _txt('name')
         ..fatherName = _txt('fatherName')

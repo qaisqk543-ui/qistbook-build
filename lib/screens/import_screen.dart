@@ -797,6 +797,30 @@ class _ImportScreenState extends State<ImportScreen> {
     );
   }
 
+  /// Na parhi gayi line ko wahin theek karo: manual form khulta hai jis me
+  /// parser ka best guess pehle se bhara hota hai. Save par row review list
+  /// me ajati hai — asal save Confirm & Save par hota hai.
+  Future<void> _editFailedLine(int i) async {
+    if (i < 0 || i >= _failed.length) return;
+    final line = _failed[i];
+    final guess = parseOutstandingRow(line);
+    final row = await Navigator.of(context).push<OutstandingRow>(
+      MaterialPageRoute(
+        builder: (_) => ManualEntryScreen(
+          docType: DocType.outstanding,
+          prefill: guess,
+          returnRow: true,
+        ),
+      ),
+    );
+    if (row != null && mounted) {
+      setState(() {
+        _rows.add(applyMathCheck(row));
+        _failed.removeAt(i);
+      });
+    }
+  }
+
   /// Review: save se pehle user confirm karega. Kuch ghalat ho to hata do.
   Widget _review() {
     if (_docType == DocType.outstanding) {
@@ -915,10 +939,19 @@ class _ImportScreenState extends State<ImportScreen> {
           if (_failed.isNotEmpty)
             ExpansionTile(
               title: Text(
-                  'Na parhi gayi lines (${_failed.length}) — khud dekhen'),
+                  'Na parhi gayi lines (${_failed.length}) — theek karen ya khud dekhen'),
               children: _failed
-                  .map((l) =>
-                      ListTile(dense: true, title: Text(l)))
+                  .asMap()
+                  .entries
+                  .map((e) => ListTile(
+                        dense: true,
+                        title: Text(e.value),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.edit, size: 20),
+                          tooltip: 'Theek karo',
+                          onPressed: () => _editFailedLine(e.key),
+                        ),
+                      ))
                   .toList(),
             ),
         ],

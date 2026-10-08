@@ -505,6 +505,45 @@ bool _isHeaderFragment(OcrLine line) {
   return true;
 }
 
+/// Hisab check: Current Due == OS Amount − Paid.
+/// Row ki copy wapas deta hai jis me mathChecked/verified/flagReason lage hon.
+/// Haath se theek ki gayi rows (review screen) ke liye bhi yahi use hota hai.
+OutstandingRow applyMathCheck(OutstandingRow r) {
+  final expected = r.osAmount - r.paid;
+  final tol = (expected.abs() * 0.01).clamp(2.0, 200.0);
+  final dueOk = (r.currentDue - expected).abs() <= tol;
+  var verified = true;
+  var reason = '';
+  if (!dueOk) {
+    verified = false;
+    reason =
+        'Hisab nahi mila: OS ${_fmt(r.osAmount)} − Paid ${_fmt(r.paid)} = ${_fmt(expected)}, Due likha ${_fmt(r.currentDue)}';
+  } else if (r.osAmount == 0 && r.paid == 0 && r.currentDue == 0) {
+    // 0 == 0-0 "mil gaya" jhoota green tick tha — raqam parhi hi nahi gayi.
+    verified = false;
+    reason = 'Raqam nahi parhi gayi — dobara scan karein ya khud check karein';
+  }
+  return OutstandingRow(
+    accountNo: r.accountNo,
+    accDate: r.accDate,
+    name: r.name,
+    officer: r.officer,
+    cell: r.cell,
+    item: r.item,
+    price: r.price,
+    balance: r.balance,
+    installment: r.installment,
+    osAmount: r.osAmount,
+    paid: r.paid,
+    currentDue: r.currentDue,
+    lastInstDate: r.lastInstDate,
+    months: r.months,
+    mathChecked: true,
+    verified: verified,
+    flagReason: reason,
+  );
+}
+
 /// Column-wise parse: pages (har page = OcrLine list).
 /// Header na mile to purane line-parser par fallback.
 OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
@@ -691,22 +730,7 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
       final accDateM = _dateRe.firstMatch(cols['accDate'] ?? '');
       final monthsM = RegExp(r'\d+').firstMatch(cols['months'] ?? '');
 
-      // Hisab check: Current Due == OS Amount − Paid
-      final expected = os - paid;
-      final tol = (expected.abs() * 0.01).clamp(2.0, 200.0);
-      final dueOk = (due - expected).abs() <= tol;
-      var verified = true;
-      var reason = '';
-      if (!dueOk) {
-        verified = false;
-        reason =
-            'Hisab nahi mila: OS ${_fmt(os)} − Paid ${_fmt(paid)} = ${_fmt(expected)}, Due likha ${_fmt(due)}';
-      } else if (os == 0 && paid == 0 && due == 0) {
-        // 0 == 0-0 "mil gaya" jhoota green tick tha — raqam parhi hi nahi gayi.
-        verified = false;
-        reason = 'Raqam nahi parhi gayi — dobara scan karein ya khud check karein';
-      }
-      final row = OutstandingRow(
+      final row = applyMathCheck(OutstandingRow(
         accountNo: acNo,
         accDate: accDateM?.group(0) ?? (cols['accDate'] ?? '').trim(),
         name: (cols['name'] ?? '').trim(),
@@ -726,10 +750,7 @@ OutstandingReport parseOutstandingReport(List<List<OcrLine>> pages) {
         lastInstDate:
             dateM?.group(0) ?? (cols['lastInstDate'] ?? '').trim(),
         months: monthsM != null ? int.parse(monthsM.group(0)!) : 0,
-        mathChecked: true,
-        verified: verified,
-        flagReason: reason,
-      );
+      ));
       rows.add(row);
       rowGroups.add(currentGroup);
       prevRow = row;
