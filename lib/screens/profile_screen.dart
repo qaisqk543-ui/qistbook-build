@@ -15,6 +15,7 @@ import '../services/app_lock_service.dart';
 import '../services/app_settings.dart';
 import '../services/auth_service.dart';
 import '../services/error_log.dart';
+import '../services/shop_profile.dart';
 import '../theme/app_theme.dart';
 import 'admin_screen.dart';
 import 'app_lock_screen.dart';
@@ -39,11 +40,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
   AuthService get _auth => AuthScope.of(context).auth;
   String get _uid => _auth.currentUser!.id;
   bool _pinOn = false;
+  String _shopName = defaultShopName;
 
   @override
   void initState() {
     super.initState();
     _loadPin();
+    _loadShopName();
+  }
+
+  Future<void> _loadShopName() async {
+    final n = await loadShopName();
+    if (mounted) setState(() => _shopName = n);
+  }
+
+  /// Dukaan ka naam badlo — WhatsApp/SMS auto-messages me wahi naam jayega.
+  Future<void> _editShopName() async {
+    final ctrl = TextEditingController(text: _shopName);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Dukaan ka naam'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              textCapitalization: TextCapitalization.words,
+              style: AppText.body,
+              decoration: const InputDecoration(
+                  labelText: 'Dukaan / shop ka naam'),
+            ),
+            const SizedBox(height: AppSpace.s),
+            Text(
+              'Ye naam WhatsApp aur SMS ke auto-message me aayega.',
+              style:
+                  AppText.caption.copyWith(color: AppColors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    final name = ctrl.text.trim();
+    ctrl.dispose();
+    if (ok != true || !mounted) return;
+    if (name.isEmpty) {
+      showAppSnack(context, 'Naam khaali nahi ho sakta');
+      return;
+    }
+    await saveShopName(name);
+    if (mounted) {
+      setState(() => _shopName = name);
+      showAppSnack(context, 'Dukaan ka naam badal diya');
+    }
   }
 
   Future<void> _loadPin() async {
@@ -279,6 +337,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: AppSpace.s),
+          Card(
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: AppSpace.m,
+                  vertical: AppSpace.s),
+              leading: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                    color: AppColors.tintAmber,
+                    borderRadius:
+                        BorderRadius.circular(16)),
+                child: const Icon(Icons.store_rounded,
+                    size: 30, color: AppColors.amber),
+              ),
+              title: const Text('Dukaan ka naam',
+                  style: AppText.bodyBold),
+              subtitle: Text(_shopName,
+                  style:
+                      AppText.body.copyWith(fontSize: 16)),
+              trailing: const Icon(Icons.edit_rounded,
+                  color: AppColors.primary),
+              onTap: _editShopName,
+            ),
+          ),
+          const SizedBox(height: AppSpace.m),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(AppSpace.m),

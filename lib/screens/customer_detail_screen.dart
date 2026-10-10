@@ -11,6 +11,7 @@ import '../models/customer.dart';
 import '../services/access_control.dart';
 import '../services/customer_store.dart';
 import '../services/reminders.dart';
+import '../services/shop_profile.dart';
 
 class CustomerDetailScreen extends StatefulWidget {
   final Customer customer;
@@ -456,11 +457,15 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                   icon: const Icon(Icons.chat,
                       color: Colors.green, size: 22),
                   tooltip: 'WhatsApp',
-                  onPressed: () => openWhatsAppNumber(
-                      ec.phone,
-                      'Assalam o Alaikum${ec.label.isNotEmpty ? ' ${ec.label}' : ''}, '
-                      'ALIF ELECTRONICS se ittila: '
-                      '${c.name} ki qist pending hai. Shukriya.'),
+                  onPressed: () async {
+                    final shop =
+                        (await loadShopName()).toUpperCase();
+                    await openWhatsAppNumber(
+                        ec.phone,
+                        'Assalam o Alaikum${ec.label.isNotEmpty ? ' ${ec.label}' : ''}, '
+                        '$shop se ittila: '
+                        '${c.name} ki qist pending hai. Shukriya.');
+                  },
                 ),
                 IconButton(
                   icon: const Icon(Icons.edit, size: 20),
@@ -549,12 +554,16 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                           icon: const Icon(Icons.chat,
                               color: Colors.green),
                           tooltip: 'WhatsApp ${g.name}',
-                          onPressed: () => openWhatsAppNumber(
-                              g.phone,
-                              'Assalam o Alaikum ${g.name}, '
-                              'ALIF ELECTRONICS se ittila: '
-                              '${c.name} ki qist pending hai. '
-                              'Baraye meherbani tawajjo dein. Shukriya.'),
+                          onPressed: () async {
+                            final shop =
+                                (await loadShopName()).toUpperCase();
+                            await openWhatsAppNumber(
+                                g.phone,
+                                'Assalam o Alaikum ${g.name}, '
+                                '$shop se ittila: '
+                                '${c.name} ki qist pending hai. '
+                                'Baraye meherbani tawajjo dein. Shukriya.');
+                          },
                         ),
                       ],
                     ],

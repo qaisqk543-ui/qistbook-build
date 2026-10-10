@@ -8,23 +8,31 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/customer.dart';
 import 'payment_accounts.dart';
+import 'shop_profile.dart';
 
-String dueReminderMessage(Customer c, {bool urdu = true}) {
+/// Dukaan ka naam message me — jo naam Profile me "Dukaan ka naam" me likha
+/// hai wahi jata hai (default: Alif Electronics, Kingra). Koi aur dukaan wala
+/// apna naam likhe to us ke messages me usi ka naam aayega.
+String dueReminderMessage(Customer c,
+    {bool urdu = true, String shopName = defaultShopName}) {
   final due = c.currentDue.toStringAsFixed(0);
   final inst = c.monthlyInstallment.toStringAsFixed(0);
+  final shop = shopName.toUpperCase();
   if (urdu) {
-    return 'Assalam o Alaikum ${c.name}, ALIF ELECTRONICS se ittila di jati '
+    return 'Assalam o Alaikum ${c.name}, $shop se ittila di jati '
         'hai ke aap ki is mah ki qist Rs $inst me se Rs $due baqi hai. '
         'Baraye meherbani jald ada karen. Shukriya.';
   }
-  return 'Assalam o Alaikum ${c.name}, this is ALIF ELECTRONICS. '
+  return 'Assalam o Alaikum ${c.name}, this is $shop. '
       'Your installment of Rs $inst has Rs $due pending. '
       'Please pay at your earliest. Thank you.';
 }
 
-String paidConfirmationMessage(Customer c, double amount) {
+String paidConfirmationMessage(Customer c, double amount,
+    {String shopName = defaultShopName}) {
+  final shop = shopName.toUpperCase();
   return 'Assalam o Alaikum ${c.name}, Rs ${amount.toStringAsFixed(0)} '
-      'ki adayegi moosool ho gayi hai. Shukriya — ALIF ELECTRONICS.';
+      'ki adayegi moosool ho gayi hai. Shukriya — $shop.';
 }
 
 /// Saved payment accounts as shareable lines, e.g.
@@ -39,8 +47,10 @@ Future<String> paymentAccountsText() async {
 }
 
 /// Due reminder + payment accounts (auto-shared in SMS/WhatsApp).
+/// Dukaan ka naam Profile setting se aata hai.
 Future<String> dueReminderMessageWithAccounts(Customer c) async {
-  final base = dueReminderMessage(c);
+  final shop = await loadShopName();
+  final base = dueReminderMessage(c, shopName: shop);
   final acc = await paymentAccountsText();
   if (acc.isEmpty) return base;
   return '$base\n\nAdaigi ke liye:\n$acc';
