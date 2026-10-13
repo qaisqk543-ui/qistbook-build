@@ -12,10 +12,12 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:provider/provider.dart';
 
@@ -39,6 +41,36 @@ class _ImportScreenState extends State<ImportScreen> {
   DocType _docType = DocType.outstanding;
   bool _busy = false;
   String _status = '';
+
+  /// Persistent result/error banner — kabhi finally me clear NAHI hota.
+  /// Sirf nayi operation shuru hone par ya user ke dismiss par hat-ta hai,
+  /// taake koi bhi failure "wapas khaali page" ban kar ghayab na ho.
+  String _notice = '';
+  bool _noticeIsError = true;
+
+  /// Aakhri run ka raw OCR text — 0 rows parhe to diagnosis ke liye
+  /// user ko dikhaya/copy karaya jata hai.
+  String _rawOcr = '';
+
+  /// Har failure yahin se guzre: log + busy off + persistent banner.
+  /// Sirf user-cancel wala return silent rehta hai.
+  void _fail(String msg, {Object? error, String screen = 'Import'}) {
+    if (error != null) ErrorLog.log(screen, error);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _notice = msg;
+      _noticeIsError = true;
+    });
+  }
+
+  void _clearNotice() {
+    if (!mounted) return;
+    setState(() {
+      _notice = '';
+      _rawOcr = '';
+    });
+  }
 
   // Multi-page scan staging
   bool _staging = false;
@@ -161,8 +193,13 @@ class _ImportScreenState extends State<ImportScreen> {
                 width: page.width * 2,
                 height: page.height * 2,
                 format: PdfPageImageFormat.png);
+            final bytes = img?.bytes;
+            if (bytes == null || bytes.isEmpty) {
+              debugPrint('QistBook: PDF page $i rendered empty — skip');
+              continue; // sirf ye page skip, baqi pages jari rahen
+            }
             final file = File('${tmp.path}/kistbook_p$i.png');
-            await file.writeAsBytes(img!.bytes);
+            await file.writeAsBytes(bytes);
             out.add(file.path);
           } finally {
             await page.close();
@@ -198,6 +235,8 @@ class _ImportScreenState extends State<ImportScreen> {
       final result = await scanner.scanDocument();
       final images = result.images ?? [];
       if (images.isEmpty) return; // user ne cancel kiya
+      _clearNotice();
+      if (!mounted) return;
       setState(() {
         _busy = true;
         _status = '${images.length} page(s) scan ho gaye — parh rahe hain…';
@@ -206,7 +245,15 @@ class _ImportScreenState extends State<ImportScreen> {
     } catch (e) {
       // Scanner na chale (purana phone / Play Services nahi) → purana camera.
       debugPrint('QistBook: document scanner fail, camera fallback: $e');
-      await _scanPageLegacy();
+      ErrorLog.log('Import document scanner', e);
+      try {
+        await _scanPageLegacy();
+      } catch (e2) {
+        // Camera bhi na chale (permission denied waghera) → kabhi silent nahi.
+        _fail('Scan nahi ho saka: $e2\n'
+            'Camera ki permission check karen (Settings → Apps → QistBook → Permissions).',
+            error: e2, screen: 'Import scan');
+      }
     } finally {
       try {
         await scanner?.close();
@@ -236,10 +283,14 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   /// Method 1 (purana fallback): sadah camera photo.
+  /// NOTE: exceptions yahan se BAHAR nikalne do taake _scanDocument
+  /// unhe pakar kar user ko wazeh message dikhaye (silent kabhi nahi).
   Future<void> _scanPageLegacy() async {
     final x = await _picker.pickImage(
         source: ImageSource.camera, imageQuality: 95);
     if (x != null) {
+      _clearNotice();
+      if (!mounted) return;
       setState(() {
         _busy = true;
         _status = 'Photo saaf kar rahe hain…';
@@ -253,30 +304,47 @@ class _ImportScreenState extends State<ImportScreen> {
 
   /// Method 1: scan pages with the camera, one after another.
   Future<void> _scanPage() async {
-    // Naya pipeline: document scanner (auto-detect + seedha + crop).
-    await _scanDocument();
+    try {
+      // Naya pipeline: document scanner (auto-detect + seedha + crop).
+      await _scanDocument();
+    } catch (e) {
+      // Button se nikli hui koi bhi exception silent nahi jayegi.
+      _fail('Scan shuru nahi ho saka: $e', error: e, screen: 'Import scan');
+    }
   }
 
   /// Method 2: photos from the gallery (multi-select) — preprocessing ke sath.
   Future<void> _pickGallery() async {
-    final xs = await _picker.pickMultiImage(imageQuality: 95);
-    if (xs.isEmpty) return;
-    setState(() {
-      _busy = true;
-      _status = 'Photos saaf kar rahe hain…';
-    });
-    final enhanced = <String>[];
-    for (var i = 0; i < xs.length; i++) {
-      if (mounted) {
-        setState(() => _status = 'Photo ${i + 1}/${xs.length} saaf ho rahi hai…');
+    try {
+      final xs = await _picker.pickMultiImage(imageQuality: 95);
+      if (xs.isEmpty) return; // user ne cancel kiya — yehi waahid silent return
+      _clearNotice();
+      setState(() {
+        _busy = true;
+        _status = 'Photos saaf kar rahe hain…';
+      });
+      final enhanced = <String>[];
+      for (var i = 0; i < xs.length; i++) {
+        if (mounted) {
+          setState(() => _status = 'Photo ${i + 1}/${xs.length} saaf ho rahi hai…');
+        }
+        enhanced.add(await _enhanceImage(xs[i].path));
       }
-      enhanced.add(await _enhanceImage(xs[i].path));
+      if (!mounted) return;
+      await _processImages(enhanced);
+    } catch (e) {
+      _fail('Gallery se photos nahi aa sakin: $e\n'
+          'Photos ki permission check karen (Settings → Apps → QistBook → Permissions).',
+          error: e, screen: 'Import gallery');
     }
-    if (!mounted) return;
-    await _processImages(enhanced);
   }
 
   /// Method 3: PDF file with multiple customers.
+  ///
+  /// HARDENED (v1.0.35): picked PDF ko HAMESHA app temp file me copy karo —
+  /// content:// ya provider path kabhi seedha PdfDocument.openFile ko nahi
+  /// dena. Temp file ka size verify karo. Koi bhi failure → persistent
+  /// _notice banner (silent wapas kabhi nahi). Sirf user-cancel silent hai.
   Future<void> _pickPdf() async {
     FilePickerResult? res;
     try {
@@ -286,33 +354,48 @@ class _ImportScreenState extends State<ImportScreen> {
         withData: true, // kuch phones path nahi dete — bytes se kaam chalao
       );
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _status = 'PDF chunne me masla: $e');
+      _fail('PDF chunne me masla: $e\n'
+          'Files app me PDF tak rasai check karen, ya gallery se photo len.',
+          error: e, screen: 'Import PDF pick');
       return;
     }
     if (res == null || res.files.isEmpty) return; // user ne cancel kiya
     final picked = res.files.single;
-    String? pdfPath = picked.path;
-    // Path na mile to bytes ko temp file me likho.
-    if (pdfPath == null && picked.bytes != null) {
-      try {
-        final tmp = Directory.systemTemp;
-        final f = File(
-            '${tmp.path}/kistbook_import_${DateTime.now().millisecondsSinceEpoch}.pdf');
-        await f.writeAsBytes(picked.bytes!);
-        pdfPath = f.path;
-      } catch (e) {
-        if (!mounted) return;
-        setState(() => _status = 'PDF save nahi ho saki: $e');
+
+    // STEP 1 — PDF ko hamesha app temp me materialize karo.
+    late final String pdfPath;
+    try {
+      final tmpDir = await getTemporaryDirectory();
+      final target = File(
+          '${tmpDir.path}/qb_import_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      if (picked.path != null) {
+        // Path mila to bhi copy karo — original content:// ho sakta hai.
+        await File(picked.path!).copy(target.path);
+      } else if (picked.bytes != null) {
+        await target.writeAsBytes(picked.bytes!);
+      } else {
+        _fail('PDF ka path aur data dono nahi mile.\n'
+            'Dobara koshish karo, ya gallery se us PDF ki photo lo.',
+            screen: 'Import PDF pick');
         return;
       }
-    }
-    if (pdfPath == null) {
-      if (!mounted) return;
-      setState(() => _status =
-          'PDF ka path nahi mila — dobara koshish karo ya gallery se photo lo.');
+      final size = await target.length();
+      if (size <= 0) {
+        try {
+          await target.delete();
+        } catch (_) {}
+        _fail('PDF file khaali nikli (0 bytes) — file dobara check karo.',
+            screen: 'Import PDF pick');
+        return;
+      }
+      pdfPath = target.path;
+    } catch (e) {
+      _fail('PDF tayaar nahi ho saki: $e', error: e, screen: 'Import PDF pick');
       return;
     }
+
+    // STEP 2 — render + process.
+    _clearNotice();
     setState(() {
       _busy = true;
       _status = 'PDF parh rahe hain…';
@@ -328,15 +411,12 @@ class _ImportScreenState extends State<ImportScreen> {
         onTimeout: () => throw TimeoutException('PDF render me zyada waqt lag raha hai'),
       );
       if (pages.isEmpty) {
-        throw Exception('PDF ke pages parhe nahi ja sake');
+        throw Exception('PDF ke pages render nahi ho sake '
+            '(kharaab/scan-image PDF ho sakti hai). Gallery se uski photo lo.');
       }
       await _processImages(pages);
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _status = 'PDF error: $e';
-      });
+      _fail('PDF parhne me masla: $e', error: e, screen: 'Import PDF process');
     }
   }
 
@@ -344,10 +424,15 @@ class _ImportScreenState extends State<ImportScreen> {
 
   /// Har page alag try/catch me — ek page fail ho to baqi pages ka
   /// parsed data ZAYA NAHI hota. Failed pages retry/skip dialog me.
+  ///
+  /// HARDENED (v1.0.35): finally kabhi _notice clear NAHI karta — 0 rows ya
+  /// exception par user ko hamesha wazeh paigham milta hai, khaali page kabhi nahi.
   Future<void> _processImages(List<String> paths) async {
     setState(() {
       _busy = true;
       _staging = false;
+      _notice = '';
+      _rawOcr = '';
       _rows = [];
       _failed = [];
       _groups = [];
@@ -374,6 +459,10 @@ class _ImportScreenState extends State<ImportScreen> {
         setState(() => _status = 'Data samajh rahe hain…');
         // Column-wise parser: header se columns, phir hisab cross-check.
         final report = parseOutstandingReport(pages);
+        // Raw OCR text sambhaal lo — 0 rows aye to diagnosis ke liye dikhayenge.
+        final raw = pages
+            .map((p) => p.map((l) => l.text).join('\n'))
+            .join('\n\n----- page -----\n\n');
         setState(() {
           _rows = report.rows;
           _failed = report.failed;
@@ -382,6 +471,20 @@ class _ImportScreenState extends State<ImportScreen> {
               report.pageTotalDue > 0 ? report.totalMatches : null;
           _pageTotalDue = report.pageTotalDue;
           _parsedTotalDue = report.parsedTotalDue;
+          if (_rows.isEmpty) {
+            _rawOcr = raw.length > 100000 ? raw.substring(0, 100000) : raw;
+            _noticeIsError = true;
+            _notice = failedPages.isNotEmpty
+                ? '${failedPages.length}/${paths.length} page(s) parhe hi nahi ja sake, '
+                  'aur baqiyon se koi row nahi nikli.\n'
+                  'Photo saaf/s seedhi lo, roshni achi rakho, ya "Parha hua text dekho" '
+                  'me dekho ke OCR ne kya parha.'
+                : 'Koi row parhi nahi ja saki (${paths.length} page(s) parhe gaye).\n'
+                  'Ho sakta hai photo dhundli/teri ho ya ye report ka format na ho.\n'
+                  '"Parha hua text dekho" me dekho ke OCR ne asal me kya parha tha.';
+          } else {
+            _notice = '';
+          }
         });
         if (failedPages.isNotEmpty && mounted) {
           await _failedPagesDialog(failedPages, paths);
@@ -403,7 +506,19 @@ class _ImportScreenState extends State<ImportScreen> {
             failedPages.add(i);
           }
         }
-        setState(() => _statements = drafts);
+        setState(() {
+          _statements = drafts;
+          if (_statements.isEmpty) {
+            _rawOcr = drafts.isEmpty
+                ? ''
+                : drafts.map((d) => d.rawText).join('\n\n----- page -----\n\n');
+            _noticeIsError = true;
+            _notice = 'Statement se koi data nahi nikla (${paths.length} page(s)).\n'
+                'Ek customer ka poora hisaab wala page saaf photo me do.';
+          } else {
+            _notice = '';
+          }
+        });
         if (failedPages.isNotEmpty && mounted) {
           await _failedPagesDialog(failedPages, paths);
         }
@@ -411,17 +526,21 @@ class _ImportScreenState extends State<ImportScreen> {
     } catch (e) {
       ErrorLog.log('Import process', e);
       if (mounted) {
-        await showFriendlyError(
-            context, 'Import me masla aaya: $e',
-            screen: 'Import');
+        setState(() {
+          _noticeIsError = true;
+          _notice = 'Import me masla aaya: $e\n'
+              'Dobara koshish karo — masla barqarar rahe to Troubleshooting me Error Log dekho.';
+        });
       }
-      setState(() => _status = 'Error ho gaya');
     } finally {
-      setState(() {
-        _busy = false;
-        _status = '';
-        _stagedPaths.clear();
-      });
+      // NOTE: _notice yahan clear NAHI hota — user ko natija lazmi nazar aye.
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _status = '';
+          _stagedPaths.clear();
+        });
+      }
     }
   }
 
@@ -549,7 +668,10 @@ class _ImportScreenState extends State<ImportScreen> {
                 Text(_status),
               ],
             ))
-          : _rows.isNotEmpty || _statements.isNotEmpty
+          // Na parhi gayi lines hon to review lazmi dikhao — warna user
+          // andha rahega ke "kuch to" parha gaya tha (0 rows + failed lines
+          // wala case pehle khaali page par wapas jata tha).
+          : _rows.isNotEmpty || _statements.isNotEmpty || _failed.isNotEmpty
               ? _review()
               : _staging
                   ? _stagingUi()
@@ -566,11 +688,93 @@ class _ImportScreenState extends State<ImportScreen> {
     );
   }
 
+  /// OCR ne asal me kya parha — diagnosis dialog (copy bhi ho sakta hai).
+  Future<void> _showRawOcrDialog() async {
+    if (!mounted || _rawOcr.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('OCR ne ye parha'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: SingleChildScrollView(
+            child: SelectableText(_rawOcr,
+                style: const TextStyle(fontSize: 12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _rawOcr));
+              ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Text copy ho gaya.')));
+            },
+            child: const Text('Copy karo'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Band karo'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Persistent notice banner — _processImages ke baad ka natija ya koi
+  /// failure. Ye kabhi khud-ba-khud ghayab nahi hota.
+  Widget _noticeBanner() {
+    if (_notice.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _noticeIsError ? Colors.red.shade50 : Colors.green.shade50,
+        border: Border.all(
+            color: _noticeIsError ? Colors.red.shade300 : Colors.green.shade300),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                  _noticeIsError ? Icons.error_outline : Icons.check_circle,
+                  color: _noticeIsError ? Colors.red : Colors.green),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(_notice,
+                      style: const TextStyle(fontSize: 14))),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: _clearNotice,
+                tooltip: 'Hatao',
+              ),
+            ],
+          ),
+          if (_rawOcr.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.text_snippet, size: 18),
+              label: const Text('Parha hua text dekho'),
+              onPressed: _showRawOcrDialog,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   /// Step 1 + 2: pehle konsi file, phir kis tareeqe se deni hai.
   Widget _pickerUi() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        _noticeBanner(),
         _sectionTitle('1. Konsi file hai?'),
         _docCard(
           doc: DocType.outstanding,
@@ -618,10 +822,8 @@ class _ImportScreenState extends State<ImportScreen> {
                     ManualEntryScreen(docType: _docType)),
           ),
         ),
-        if (_status.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(_status, style: const TextStyle(color: Colors.red)),
-        ],
+        // NOTE (v1.0.35): purana transient red _status hata diya — ab saare
+        // natije/nakami _noticeBanner me dikhte hain (persistent).
       ],
     );
   }
@@ -827,6 +1029,10 @@ class _ImportScreenState extends State<ImportScreen> {
       final flagged = _rows.where((r) => !r.verified).length;
       return Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: _noticeBanner(),
+          ),
           Container(
             padding: const EdgeInsets.all(12),
             color: Colors.blue.shade50,
@@ -843,7 +1049,9 @@ class _ImportScreenState extends State<ImportScreen> {
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold))),
                     ElevatedButton(
-                        onPressed: _saveOutstanding,
+                        // 0 rows par Confirm kabhi enable nahi — warna
+                        // markMissingAsCleared({}) saare customers clear kar dega.
+                        onPressed: _rows.isEmpty ? null : _saveOutstanding,
                         child: const Text('Confirm & Save')),
                   ],
                 ),
@@ -960,6 +1168,10 @@ class _ImportScreenState extends State<ImportScreen> {
     // statement review
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: _noticeBanner(),
+        ),
         Container(
           padding: const EdgeInsets.all(12),
           color: Colors.blue.shade50,
