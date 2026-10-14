@@ -196,7 +196,9 @@ class _SelfRepairScreenState extends State<SelfRepairScreen> {
                         context,
                         MaterialPageRoute(
                           builder: (_) =>
-                              BackupScreen(onRestoreDone: widget.onRestoreDone),
+                              BackupScreen(
+                                  onRestoreDone: widget.onRestoreDone,
+                                  bounceToLogin: true),
                         ),
                       ),
                     ),

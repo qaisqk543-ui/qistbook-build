@@ -1,6 +1,7 @@
 /// Backup & Restore screen (Profile → Backup).
-/// "Backup banao" → DB copy Downloads me + share option.
-/// "Restore" → .db file chuno → validate → confirm → replace → login par wapas.
+/// "Backup banao" → copy Downloads me + share option.
+/// "Restore" → file chuno → validate → counts ke sath confirm → replace →
+/// data wahin reload + success dialog (reset flows me login par wapas).
 library;
 
 import 'package:flutter/material.dart';
@@ -14,9 +15,15 @@ import '../theme/app_theme.dart';
 import 'auth_screen.dart';
 
 class BackupScreen extends StatefulWidget {
-  /// Restore hone par app ko login screen par wapas le jao.
+  /// Sirf reset/repair flows ke liye: restore ke baad login par wapas jao.
+  /// Aam user flow (Profile) me false — data WAHIN reload hota hai aur
+  /// user ko customers ki tadaad ke sath success dikhta hai (v1.0.38:
+  /// Qais ki shikayat thi "restore click karo to home khul jata hai,
+  /// data restore nahi hota" — purana login-bounce hi wo confusion tha).
   final VoidCallback onRestoreDone;
-  const BackupScreen({super.key, required this.onRestoreDone});
+  final bool bounceToLogin;
+  const BackupScreen(
+      {super.key, required this.onRestoreDone, this.bounceToLogin = false});
 
   @override
   State<BackupScreen> createState() => _BackupScreenState();
@@ -92,12 +99,20 @@ class _BackupScreenState extends State<BackupScreen> {
             screen: 'Restore');
         return;
       }
+      // Pehle se batao: is file me kitne customers hain aur abhi kitne
+      // mitenge — andhe me restore nahi hoga.
+      final incoming = await BackupService.countCustomers(file);
+      if (!mounted) return;
+      final store = Provider.of<CustomerStore>(context, listen: false);
+      final current = store.customers.length;
       final confirm = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Restore karein?'),
-          content: const Text(
-            'Is phone ka current data HATA kar backup wala data aa jayega. Pehle "Backup banao" se current data mehfooz kar len.',
+          content: Text(
+            'Is file me ${incoming ?? '?'} customers ka data hai.\n'
+            'Abhi app me $current customers hain — wo HATA kar file wala data aa jayega.\n\n'
+            'Pehle "Backup banao" se current data mehfooz kar len.',
             style: AppText.body,
           ),
           actions: [
@@ -113,12 +128,6 @@ class _BackupScreenState extends State<BackupScreen> {
         ),
       );
       if (confirm != true || !mounted) return;
-      // Store ka khula connection band karo, phir file replace karo.
-      try {
-        await Provider.of<CustomerStore>(context, listen: false)
-            .closeDb();
-      } catch (_) {}
-      if (!mounted) return;
       final ok = await BackupService.restoreFrom(_uid, file);
       if (!mounted) return;
       if (!ok) {
@@ -127,8 +136,34 @@ class _BackupScreenState extends State<BackupScreen> {
             screen: 'Restore');
         return;
       }
-      showAppSnack(context, 'Restore ho gaya — dobara login karein');
-      widget.onRestoreDone();
+      if (widget.bounceToLogin) {
+        // Reset/repair flow: purana rawaiya — login se dobara shuru.
+        showAppSnack(context, 'Restore ho gaya — dobara login karein');
+        widget.onRestoreDone();
+        return;
+      }
+      // Aam flow (v1.0.38): data WAHIN reload karo — login bounce khatam.
+      // User ko tadaad ke sath pakka saboot mile ke data aa gaya hai.
+      await store.init(_uid);
+      if (!mounted) return;
+      final loaded = store.customers.length;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Restore ho gaya ✓'),
+          content: Text(
+            '$loaded customers ab app me aa gaye hain.\n'
+            'Outstanding list khol kar dekho — data wahan hoga.',
+            style: AppText.body,
+          ),
+          actions: [
+            ElevatedButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Theek hai')),
+          ],
+        ),
+      );
+      if (mounted) Navigator.of(context).pop();
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -116,7 +116,7 @@ class AppText {
 }
 
 /// App version — pubspec ke sath sync rakho.
-const String kAppVersion = '1.0.37';
+const String kAppVersion = '1.0.38';
 
 /// Rupees formatter: Rs 92,500
 String rs(double v) =>

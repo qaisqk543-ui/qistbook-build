@@ -102,6 +102,20 @@ class BackupService {
     }
   }
 
+  /// Backup file me kitne customers hain? (Restore confirm se pehle user ko
+  /// dikhane ke liye — taake andhe me restore na ho.) Kharab file = null.
+  static Future<int?> countCustomers(File f) async {
+    try {
+      final data =
+          jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+      final list = data['customers'];
+      return list is List ? list.length : null;
+    } catch (e) {
+      ErrorLog.log('Backup count', e);
+      return null;
+    }
+  }
+
   /// Current user data file ko backup file se replace karo.
   static Future<bool> restoreFrom(String uid, File backup) async {
     try {
