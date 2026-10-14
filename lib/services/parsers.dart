@@ -310,6 +310,71 @@ class OcrLine {
   String get text => words.map((w) => w.text).join(' ');
 }
 
+/// Duplicate words hatao: ML Kit aksar ek hi printed lafz do overlapping
+/// boxes me do baar deta hai ("7150" + "7150"); tiles ke overlap se bhi
+/// dohre words ate hain. Markaz qareeb + text milta/mazmooni = duplicate —
+/// lamba (mukammal) wala rakho.
+List<OcrWord> dedupeOcrWords(List<OcrWord> elems) {
+  final deduped = <OcrWord>[];
+  for (final e in elems) {
+    var dupIdx = -1;
+    for (var i = 0; i < deduped.length; i++) {
+      final d = deduped[i];
+      final te = e.text.trim(), td = d.text.trim();
+      if (!(te == td || te.contains(td) || td.contains(te))) continue;
+      final w = (e.right - e.left) < (d.right - d.left)
+          ? (e.right - e.left)
+          : (d.right - d.left);
+      if ((e.cx - d.cx).abs() > w * 0.6) continue;
+      if ((e.top - d.top).abs() > 14.0) continue;
+      dupIdx = i;
+      break;
+    }
+    if (dupIdx >= 0) {
+      if (e.text.trim().length > deduped[dupIdx].text.trim().length) {
+        deduped[dupIdx] = e;
+      }
+    } else {
+      deduped.add(e);
+    }
+  }
+  return deduped;
+}
+
+/// Words ko rows/lines me joro: ML Kit ki apni line-grouping kabhi do
+/// rows jor deti hai, kabhi ek tor deti hai — is liye Y-coordinate
+/// (14px tolerance) se khud rows banao, har row left-to-right sort karo.
+List<OcrLine> groupWordsIntoLines(List<OcrWord> words) {
+  final rows = <List<OcrWord>>[];
+  final rowTops = <double>[];
+  for (final e in words) {
+    var placed = -1;
+    for (var i = 0; i < rows.length; i++) {
+      if ((rowTops[i] - e.top).abs() < 14.0) {
+        placed = i;
+        break;
+      }
+    }
+    if (placed >= 0) {
+      rows[placed].add(e);
+      final r = rows[placed];
+      rowTops[placed] =
+          r.map((w) => w.top).reduce((a, b) => a + b) / r.length;
+    } else {
+      rows.add([e]);
+      rowTops.add(e.top);
+    }
+  }
+  final lines = <OcrLine>[];
+  for (final r in rows) {
+    r.sort((a, b) => a.cx.compareTo(b.cx));
+    lines.add(OcrLine(r));
+  }
+  lines.sort(
+      (a, b) => a.words.first.top.compareTo(b.words.first.top));
+  return lines;
+}
+
 /// Officer group ka hisab-check: group header ka total vs parhi gayi rows.
 class OfficerGroupCheck {
   final String officer;

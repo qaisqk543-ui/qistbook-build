@@ -14,6 +14,7 @@ import '../services/call_reminders.dart';
 import '../services/customer_store.dart';
 import '../services/error_log.dart';
 import '../services/reminders.dart';
+import '../services/robust_ocr.dart';
 import '../services/support_service.dart';
 import '../theme/app_theme.dart';
 import 'auth_screen.dart';
@@ -85,6 +86,33 @@ class _TroubleshootScreenState extends State<TroubleshootScreen> {
             context, 'Cache saaf ho gaya ($n files)');
       }
     } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// OCR engine self-test (v1.0.39): app khud ek saaf text wali tasveer
+  /// bana kar parhti hai. Pass = engine/model theek hai, scan ka masla
+  /// photo/input ka hai. Fail = masla engine ka hai — farq wazeh ho jata hai.
+  Future<void> _testOcr() async {
+    setState(() => _busy = true);
+    final ocr = RobustOcr();
+    try {
+      final (ok, detail) = await ocr.selfTest();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(ok ? 'OCR engine theek hai ✓' : 'OCR engine fail ✗'),
+          content: Text(detail, style: AppText.body),
+          actions: [
+            ElevatedButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Theek hai')),
+          ],
+        ),
+      );
+    } finally {
+      await ocr.close();
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -432,6 +460,14 @@ class _TroubleshootScreenState extends State<TroubleshootScreen> {
                   'Database check & repair',
                   'Data me kharabi check karo',
                   _checkDb,
+                ),
+                _tile(
+                  Icons.document_scanner_rounded,
+                  AppColors.tintBlue,
+                  Colors.blue,
+                  'OCR engine test',
+                  'Scan parhai wala engine theek hai ya nahi — khud test',
+                  _testOcr,
                 ),
                 _tile(
                   Icons.history_rounded,

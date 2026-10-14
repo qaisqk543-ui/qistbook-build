@@ -15,7 +15,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -28,6 +27,7 @@ import '../services/customer_store.dart';
 import '../services/error_log.dart';
 import '../services/parsers.dart';
 import '../services/pdf_text.dart';
+import '../services/robust_ocr.dart';
 import '../theme/app_theme.dart';
 import 'manual_entry_screen.dart';
 
@@ -42,6 +42,15 @@ class ImportScreen extends StatefulWidget {
 
 class _ImportScreenState extends State<ImportScreen> {
   DocType _docType = DocType.outstanding;
+
+  /// Shared robust OCR engine (normalize + tiling + diagnostics).
+  final RobustOcr _robustOcr = RobustOcr();
+
+  @override
+  void dispose() {
+    _robustOcr.close();
+    super.dispose();
+  }
   bool _busy = false;
   String _status = '';
 
@@ -138,87 +147,12 @@ class _ImportScreenState extends State<ImportScreen> {
     }
   }
 
+  /// Ek page OCR — RobustOcr (v1.0.39): normalize (EXIF bake + taaza JPEG)
+  /// + bare page par tiles + positioned words; grouping parsers.dart ke
+  /// pure function se. Diagnosis _robustOcr.lastDiag me rehti hai.
   Future<List<OcrLine>> _ocrImageLinesOnce(String path) async {
-    final input = InputImage.fromFilePath(path);
-    final recognizer =
-        TextRecognizer(script: TextRecognitionScript.latin);
-    try {
-      final result = await recognizer.processImage(input);
-      // Table OCR fix: ML Kit ki apni line-grouping par bharosa nahi —
-      // kabhi do rows ek line me jor deta hai, kabhi ek row tor deta hai
-      // (columns vertically parhne wali ghalti). Saare elements ikattha
-      // karke Y-coordinate (14px tolerance) se rows banao, phir har row
-      // left-to-right sort karo.
-      final elems = <OcrWord>[];
-      for (final block in result.blocks) {
-        for (final line in block.lines) {
-          for (final el in line.elements) {
-            final b = el.boundingBox;
-            if (el.text.trim().isEmpty) continue;
-            elems.add(OcrWord(el.text,
-                left: b.left, right: b.right, top: b.top));
-          }
-        }
-      }
-      // Duplicate elements hatao: ML Kit aksar ek hi printed lafz ko do
-      // overlapping boxes me do baar deta hai ("7150" + "7150"). Bina dedup
-      // ke ye column me "7150 7150" jur kar _num me "71507150" ban jata tha
-      // (screenshot wala bug). Markaz qareeb + text milta = duplicate.
-      final deduped = <OcrWord>[];
-      for (final e in elems) {
-        var dupIdx = -1;
-        for (var i = 0; i < deduped.length; i++) {
-          final d = deduped[i];
-          final te = e.text.trim(), td = d.text.trim();
-          if (!(te == td || te.contains(td) || td.contains(te))) continue;
-          final w = (e.right - e.left) < (d.right - d.left)
-              ? (e.right - e.left)
-              : (d.right - d.left);
-          if ((e.cx - d.cx).abs() > w * 0.6) continue;
-          if ((e.top - d.top).abs() > 14.0) continue;
-          dupIdx = i;
-          break;
-        }
-        if (dupIdx >= 0) {
-          // Lamba (mukammal) wala rakho: "4100" rahe, "410" jaye.
-          if (e.text.trim().length > deduped[dupIdx].text.trim().length) {
-            deduped[dupIdx] = e;
-          }
-        } else {
-          deduped.add(e);
-        }
-      }
-      final rows = <List<OcrWord>>[];
-      final rowTops = <double>[];
-      for (final e in deduped) {
-        var placed = -1;
-        for (var i = 0; i < rows.length; i++) {
-          if ((rowTops[i] - e.top).abs() < 14.0) {
-            placed = i;
-            break;
-          }
-        }
-        if (placed >= 0) {
-          rows[placed].add(e);
-          final r = rows[placed];
-          rowTops[placed] =
-              r.map((w) => w.top).reduce((a, b) => a + b) / r.length;
-        } else {
-          rows.add([e]);
-          rowTops.add(e.top);
-        }
-      }
-      final lines = <OcrLine>[];
-      for (final r in rows) {
-        r.sort((a, b) => a.cx.compareTo(b.cx));
-        lines.add(OcrLine(r));
-      }
-      lines.sort((a, b) =>
-          a.words.first.top.compareTo(b.words.first.top));
-      return lines;
-    } finally {
-      await recognizer.close();
-    }
+    final words = await _robustOcr.recognizeWords(path);
+    return groupWordsIntoLines(words);
   }
 
   /// Rasterize every PDF page to a temp PNG so OCR can read it.
@@ -526,6 +460,7 @@ class _ImportScreenState extends State<ImportScreen> {
       });
       final rows = <OutstandingRow>[];
       final failed = <String>[];
+      double? printedTotal;
       for (var i = 0; i < pages.length; i++) {
         if (mounted) {
           setState(() =>
@@ -535,18 +470,25 @@ class _ImportScreenState extends State<ImportScreen> {
         final res = await AiScanService.scanPage(pages[i], key);
         rows.addAll(res.rows);
         failed.addAll(res.failed);
+        if (res.printedTotalDue != null) {
+          printedTotal = (printedTotal ?? 0) + res.printedTotalDue!;
+        }
       }
       if (!mounted) return;
+      final parsed = rows.fold(0.0, (a, r) => a + r.currentDue);
       setState(() {
         _busy = false;
         _status = '';
         _rows = rows;
         _failed = failed;
         _groups = [];
-        _pageTotalOk = null;
-        _pageTotalDue = 0;
-        _parsedTotalDue =
-            rows.fold(0.0, (a, r) => a + r.currentDue);
+        // AI ne printed total bhi parha ho to OCR wala hisab-check yahan
+        // bhi lagega (review screen ka ✓/⚠ badge).
+        _pageTotalDue = printedTotal ?? 0;
+        _pageTotalOk = printedTotal == null
+            ? null
+            : (parsed - printedTotal).abs() < 1.0;
+        _parsedTotalDue = parsed;
         if (rows.isEmpty) {
           _noticeIsError = true;
           _notice = 'AI se koi row nahi nikli (${pages.length} page(s)).\n'
@@ -656,6 +598,13 @@ class _ImportScreenState extends State<ImportScreen> {
           if (_rows.isEmpty) {
             _rawOcr = raw.length > 100000 ? raw.substring(0, 100000) : raw;
             _noticeIsError = true;
+            // RobustOcr ki diagnosis: khaali parhai ki ASAL wajah alfaz me
+            // (file size / dimensions ke sath) — andaza nahi (v1.0.39).
+            final diag = _robustOcr.lastDiag;
+            if (raw.trim().isEmpty && diag.userHint.isNotEmpty) {
+              _notice = diag.userHint;
+              return;
+            }
             final totalPages = pages.length + failedPages.length;
             final errLower = _lastOcrError.toLowerCase();
             final ocrErr = _lastOcrError.isEmpty
