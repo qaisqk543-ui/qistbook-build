@@ -52,6 +52,109 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadAiKey();
   }
 
+  /// Account ka email badlo/add karo (Profile info card ka edit button).
+  /// Ye login ki pehchan hai — dialog me pehle hi bata diya jata hai.
+  Future<void> _editAccountEmail() async {
+    final current = _auth.currentUser;
+    if (current == null) return;
+    final ctrl = TextEditingController(text: current.email);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Email add / badlo'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              keyboardType: TextInputType.emailAddress,
+              style: AppText.body,
+              decoration: const InputDecoration(
+                  labelText: 'Email', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: AppSpace.s),
+            Text(
+              'Login bhi isi naye email se hoga — purana email phir nahi chalega.',
+              style: AppText.caption.copyWith(color: AppColors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    final value = ctrl.text.trim();
+    ctrl.dispose();
+    if (ok != true || !mounted) return;
+    final err = await _auth.updateContact(_uid, email: value);
+    if (!mounted) return;
+    if (err != null) {
+      showAppSnack(context, err);
+    } else {
+      setState(() {});
+      showAppSnack(context, 'Email save ho gaya ✓ — login ab is email se hoga');
+    }
+  }
+
+  /// Account ka phone number badlo/add karo (Profile info card ka edit).
+  Future<void> _editAccountPhone() async {
+    final current = _auth.currentUser;
+    if (current == null) return;
+    final ctrl = TextEditingController(text: current.phone);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mobile number add / badlo'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              keyboardType: TextInputType.phone,
+              style: AppText.body,
+              decoration: const InputDecoration(
+                  labelText: 'Mobile number (03…)',
+                  border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: AppSpace.s),
+            Text(
+              'Login bhi isi naye number se hoga — purana number phir nahi chalega.',
+              style: AppText.caption.copyWith(color: AppColors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    final value = ctrl.text.trim();
+    ctrl.dispose();
+    if (ok != true || !mounted) return;
+    final err = await _auth.updateContact(_uid, phone: value);
+    if (!mounted) return;
+    if (err != null) {
+      showAppSnack(context, err);
+    } else {
+      setState(() {});
+      showAppSnack(
+          context, 'Number save ho gaya ✓ — login ab is number se hoga');
+    }
+  }
+
   Future<void> _loadAiKey() async {
     final has = await AiScanService.hasKey();
     if (mounted) setState(() => _aiKeySet = has);
@@ -456,10 +559,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Column(
                 children: [
                   _infoRow(Icons.email_rounded, 'Email',
-                      user?.email ?? '—'),
+                      user?.email ?? '—',
+                      onEdit: _editAccountEmail),
                   const Divider(),
                   _infoRow(Icons.phone_rounded, 'Phone',
-                      user?.phone ?? '—'),
+                      user?.phone ?? '—',
+                      onEdit: _editAccountPhone),
                 ],
               ),
             ),
@@ -645,7 +750,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _infoRow(IconData icon, String label, String value) {
+  Widget _infoRow(IconData icon, String label, String value,
+      {VoidCallback? onEdit}) {
     return Row(
       children: [
         Icon(icon, size: 28, color: AppColors.primary),
@@ -660,6 +766,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
         ),
+        if (onEdit != null)
+          IconButton(
+            icon: const Icon(Icons.edit_rounded,
+                color: AppColors.primary),
+            tooltip: '$label badlo',
+            onPressed: onEdit,
+          ),
       ],
     );
   }

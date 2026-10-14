@@ -140,6 +140,47 @@ class AuthService {
     return null;
   }
 
+  /// Profile se apna email/phone badlo (v1.0.40 — Qais ki farmaish: Profile
+  /// par number ke sath edit ka option ho, email bhi wahan se add ho sake).
+  /// Ye LOGIN ki pehchan hai — badalne ke baad login naye wale se hoga.
+  /// Doosre account ka email/number kabhi nahi lene denge (canonical check).
+  /// Returns: null = ho gaya, warna wajah (user ko dikhane wali).
+  Future<String?> updateContact(String uid,
+      {String? email, String? phone}) async {
+    final u = _findById(uid);
+    if (u == null) return 'Account nahi mila.';
+    final newEmail = (email ?? u.email).trim();
+    final newPhone = (phone ?? u.phone).trim();
+    if (newEmail.isEmpty && newPhone.isEmpty) {
+      return 'Email ya number — kam az kam ek hona chahiye.';
+    }
+    if (newEmail.isNotEmpty && !newEmail.contains('@')) {
+      return 'Email durust nahi lagta — pura email likho (jaise naam@gmail.com).';
+    }
+    if (newPhone.isNotEmpty && _canonPhone(newPhone).length < 10) {
+      return 'Number durust nahi lagta — pura mobile number likho.';
+    }
+    for (final other in _users) {
+      if (other.id == uid) continue;
+      if (newEmail.isNotEmpty &&
+          other.email.trim().toLowerCase() == newEmail.toLowerCase()) {
+        return 'Ye email kisi aur account par pehle se hai.';
+      }
+      final op = _canonPhone(other.phone);
+      if (newPhone.isNotEmpty &&
+          op.length >= 10 &&
+          op == _canonPhone(newPhone)) {
+        return 'Ye number kisi aur account par pehle se hai.';
+      }
+    }
+    final updated = u.copyWith(email: newEmail, phone: newPhone);
+    await _save(updated);
+    if (_currentUser?.id == uid) {
+      _currentUser = updated;
+    }
+    return null;
+  }
+
   /// Is phone par register shuda pehle user ki masked pehchan —
   /// login fail hone par user ko ishara mil jaye ke konsa email/number
   /// istemal karna hai (poora kabhi nahi dikhate).
