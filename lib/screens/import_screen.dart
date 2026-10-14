@@ -25,6 +25,7 @@ import '../models/customer.dart';
 import '../services/customer_store.dart';
 import '../services/error_log.dart';
 import '../services/parsers.dart';
+import '../services/pdf_text.dart';
 import '../theme/app_theme.dart';
 import 'manual_entry_screen.dart';
 
@@ -51,6 +52,9 @@ class _ImportScreenState extends State<ImportScreen> {
   /// Aakhri run ka raw OCR text — 0 rows parhe to diagnosis ke liye
   /// user ko dikhaya/copy karaya jata hai.
   String _rawOcr = '';
+
+  /// Aakhri OCR ghalti (ML Kit) — 0 rows par banner me wajah dikhane ko.
+  String _lastOcrError = '';
 
   /// Har failure yahin se guzre: log + busy off + persistent banner.
   /// Sirf user-cancel wala return silent rehta hai.
@@ -92,7 +96,21 @@ class _ImportScreenState extends State<ImportScreen> {
 
   // ------------------------------------------------------------ OCR helpers
 
+  /// OCR with one retry — ML Kit ka text model pehli dafa background me
+  /// download hota hai; pehli koshish fail ho to thodi der ruk kar doosri
+  /// aksar kamyab ho jati hai. Aakhri ghalti _lastOcrError me rehti hai
+  /// taake 0-rows wale banner me asal wajah likhi ja sake.
   Future<List<OcrLine>> _ocrImageLines(String path) async {
+    try {
+      return await _ocrImageLinesOnce(path);
+    } catch (e) {
+      _lastOcrError = '$e';
+      await Future.delayed(const Duration(milliseconds: 1500));
+      return _ocrImageLinesOnce(path);
+    }
+  }
+
+  Future<List<OcrLine>> _ocrImageLinesOnce(String path) async {
     final input = InputImage.fromFilePath(path);
     final recognizer =
         TextRecognizer(script: TextRecognitionScript.latin);
@@ -394,12 +412,49 @@ class _ImportScreenState extends State<ImportScreen> {
       return;
     }
 
-    // STEP 2 — render + process.
+    // STEP 2a — TEXT LAYER pehle (v1.0.36): PDF ke andar asal text ho to
+    // OCR ki zaroorat hi nahi — na ML Kit model, na page renderer. Ye
+    // sab se pakka rasta hai aur phone par fail nahi hota.
+    // Text layer na ho ya us se rows na niklen to STEP 2b (render+OCR).
     _clearNotice();
     setState(() {
       _busy = true;
       _status = 'PDF parh rahe hain…';
     });
+    try {
+      final bytes = await File(pdfPath).readAsBytes();
+      final textLines = extractPdfTextLines(bytes);
+      final totalChars = textLines.fold<int>(0, (s, l) => s + l.length);
+      if (totalChars >= 100) {
+        if (mounted) {
+          setState(() => _status = 'PDF ka text parh rahe hain…');
+        }
+        final page = textLines
+            .map((l) => OcrLine([OcrWord(l, left: 0, right: 0, top: 0)]))
+            .toList();
+        await _processOcrPages([page]);
+        if (_rows.isNotEmpty || _statements.isNotEmpty) return;
+        // Text tha lekin rows nahi nikli — render+OCR ko mauqa do.
+        if (mounted) {
+          setState(() {
+            _notice = '';
+            _rawOcr = '';
+            _busy = true;
+            _status = 'PDF pages bana rahe hain…';
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('QistBook: PDF text layer fail, OCR fallback: $e');
+      if (mounted) {
+        setState(() {
+          _busy = true;
+          _status = 'PDF pages bana rahe hain…';
+        });
+      }
+    }
+
+    // STEP 2b — render + OCR (photo wali / scanned PDF ke liye).
     try {
       final pages = await _pdfToImagePaths(
         pdfPath,
@@ -427,7 +482,34 @@ class _ImportScreenState extends State<ImportScreen> {
   ///
   /// HARDENED (v1.0.35): finally kabhi _notice clear NAHI karta — 0 rows ya
   /// exception par user ko hamesha wazeh paigham milta hai, khaali page kabhi nahi.
+  /// Tasveeron ko OCR karke pages banao, phir _processOcrPages ko do.
   Future<void> _processImages(List<String> paths) async {
+    final pages = <List<OcrLine>>[];
+    final failedPages = <int>[];
+    setState(() {
+      _busy = true;
+      _status = '${paths.length} page(s) parh rahe hain…';
+    });
+    for (var i = 0; i < paths.length; i++) {
+      if (mounted) {
+        setState(() => _status = 'Page ${i + 1}/${paths.length}…');
+      }
+      try {
+        pages.add(await _ocrImageLines(paths[i]));
+      } catch (e) {
+        ErrorLog.log('Import OCR page ${i + 1}', e);
+        _lastOcrError = '$e';
+        failedPages.add(i);
+      }
+    }
+    await _processOcrPages(pages,
+        failedPages: failedPages, retryPaths: paths);
+  }
+
+  /// OCR pages (ya PDF text-layer ki lines) ko parse karke review banao.
+  /// failedPages/retryPaths sirf OCR raste se aate hain (retry dialog ko).
+  Future<void> _processOcrPages(List<List<OcrLine>> pages,
+      {List<int> failedPages = const [], List<String>? retryPaths}) async {
     setState(() {
       _busy = true;
       _staging = false;
@@ -440,23 +522,10 @@ class _ImportScreenState extends State<ImportScreen> {
       _pageTotalDue = 0;
       _parsedTotalDue = 0;
       _statements = [];
-      _status = '${paths.length} page(s) parh rahe hain…';
+      _status = 'Data samajh rahe hain…';
     });
     try {
       if (_docType == DocType.outstanding) {
-        final pages = <List<OcrLine>>[];
-        final failedPages = <int>[];
-        for (var i = 0; i < paths.length; i++) {
-          setState(
-              () => _status = 'Page ${i + 1}/${paths.length}…');
-          try {
-            pages.add(await _ocrImageLines(paths[i]));
-          } catch (e) {
-            ErrorLog.log('Import OCR page ${i + 1}', e);
-            failedPages.add(i);
-          }
-        }
-        setState(() => _status = 'Data samajh rahe hain…');
         // Column-wise parser: header se columns, phir hisab cross-check.
         final report = parseOutstandingReport(pages);
         // Raw OCR text sambhaal lo — 0 rows aye to diagnosis ke liye dikhayenge.
@@ -474,37 +543,34 @@ class _ImportScreenState extends State<ImportScreen> {
           if (_rows.isEmpty) {
             _rawOcr = raw.length > 100000 ? raw.substring(0, 100000) : raw;
             _noticeIsError = true;
+            final totalPages = pages.length + failedPages.length;
+            final errLower = _lastOcrError.toLowerCase();
+            final ocrErr = _lastOcrError.isEmpty
+                ? ''
+                : '\nParhai ki ghalti: $_lastOcrError'
+                    '${errLower.contains('model') || errLower.contains('download') || errLower.contains('waiting') ? '\nInternet/Wi-Fi on karke 1-2 minute ruko — phone parhai wala model pehli dafa download karta hai, phir dobara try karo.' : ''}';
             _notice = failedPages.isNotEmpty
-                ? '${failedPages.length}/${paths.length} page(s) parhe hi nahi ja sake, '
-                  'aur baqiyon se koi row nahi nikli.\n'
-                  'Photo saaf/s seedhi lo, roshni achi rakho, ya "Parha hua text dekho" '
+                ? '${failedPages.length}/$totalPages page(s) parhe hi nahi ja sake, '
+                  'aur baqiyon se koi row nahi nikli.$ocrErr\n'
+                  'Photo saaf/seedhi lo, roshni achi rakho, ya "Parha hua text dekho" '
                   'me dekho ke OCR ne kya parha.'
-                : 'Koi row parhi nahi ja saki (${paths.length} page(s) parhe gaye).\n'
+                : 'Koi row parhi nahi ja saki (${pages.length} page(s) parhe gaye).\n'
                   'Ho sakta hai photo dhundli/teri ho ya ye report ka format na ho.\n'
                   '"Parha hua text dekho" me dekho ke OCR ne asal me kya parha tha.';
           } else {
             _notice = '';
           }
         });
-        if (failedPages.isNotEmpty && mounted) {
-          await _failedPagesDialog(failedPages, paths);
+        if (failedPages.isNotEmpty && retryPaths != null && mounted) {
+          await _failedPagesDialog(failedPages, retryPaths);
         }
       } else {
         final drafts = <_StatementDraft>[];
-        final failedPages = <int>[];
-        for (var i = 0; i < paths.length; i++) {
-          setState(
-              () => _status = 'Page ${i + 1}/${paths.length}…');
-          try {
-            final lines = await _ocrImageLines(paths[i]);
-            final text = lines.map((l) => l.text).join('\n');
-            final tmp = parseStatementPage(text);
-            drafts.add(_StatementDraft(
-                customer: tmp, rawText: text, source: paths[i]));
-          } catch (e) {
-            ErrorLog.log('Import OCR page ${i + 1}', e);
-            failedPages.add(i);
-          }
+        for (var i = 0; i < pages.length; i++) {
+          final text = pages[i].map((l) => l.text).join('\n');
+          final tmp = parseStatementPage(text);
+          drafts.add(_StatementDraft(
+              customer: tmp, rawText: text, source: 'page ${i + 1}'));
         }
         setState(() {
           _statements = drafts;
@@ -513,14 +579,14 @@ class _ImportScreenState extends State<ImportScreen> {
                 ? ''
                 : drafts.map((d) => d.rawText).join('\n\n----- page -----\n\n');
             _noticeIsError = true;
-            _notice = 'Statement se koi data nahi nikla (${paths.length} page(s)).\n'
+            _notice = 'Statement se koi data nahi nikla (${pages.length} page(s)).\n'
                 'Ek customer ka poora hisaab wala page saaf photo me do.';
           } else {
             _notice = '';
           }
         });
-        if (failedPages.isNotEmpty && mounted) {
-          await _failedPagesDialog(failedPages, paths);
+        if (failedPages.isNotEmpty && retryPaths != null && mounted) {
+          await _failedPagesDialog(failedPages, retryPaths);
         }
       }
     } catch (e) {

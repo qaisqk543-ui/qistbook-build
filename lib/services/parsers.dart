@@ -251,6 +251,8 @@ OutstandingRow? _parseOutstandingRowLenient(String line) {
 /// (Used only to split "Customer Name + Officer" on one OCR line.)
 const _knownOfficers = <String>[
   'Sajjad Ahmed',
+  'Amir Shehzad',
+  'Faiz Rasool',
   'M Asad',
   'Amjad Ali Rana',
   'Yasir islam',

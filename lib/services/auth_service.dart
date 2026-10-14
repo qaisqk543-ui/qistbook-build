@@ -108,16 +108,59 @@ class AuthService {
     return null;
   }
 
+  /// Pakistani phone ka canonical roop: hamesha "03xxxxxxxxx".
+  /// Signup par +92 wala format aur login par 03 wala format likha jaye
+  /// to purana seedha digits-match fail ho jata tha — ek taraf "pehle se
+  /// register hai" aur doosri taraf "registered nahi hai" (v1.0.35 wala
+  /// login bug). Ab dono formats ek hi roop me milaye jate hain.
+  static String _canonPhone(String s) {
+    var d = s.replaceAll(RegExp(r'\D'), '');
+    if (d.startsWith('0092')) d = d.substring(4);
+    if (d.startsWith('92') && d.length == 12) d = '0${d.substring(2)}';
+    return d;
+  }
+
   Future<AppUser?> findByIdentifier(String identifier) async {
     final key = identifier.trim().toLowerCase();
+    final keyPhone = _canonPhone(identifier);
     for (final u in _users) {
-      if (u.email.trim().toLowerCase() == key ||
-          u.phone.replaceAll(RegExp(r'\D'), '') ==
-              key.replaceAll(RegExp(r'\D'), '')) {
+      if (key.contains('@') && u.email.trim().toLowerCase() == key) {
+        return u;
+      }
+      // Phone match sirf tab jab DONO taraf asal number ho — khaali
+      // digits ("") ka match kabhi nahi (email me digits na hon to
+      // purana code phone-less user ko galat match kar deta tha).
+      final uPhone = _canonPhone(u.phone);
+      if (keyPhone.length >= 10 &&
+          uPhone.length >= 10 &&
+          uPhone == keyPhone) {
         return u;
       }
     }
     return null;
+  }
+
+  /// Is phone par register shuda pehle user ki masked pehchan —
+  /// login fail hone par user ko ishara mil jaye ke konsa email/number
+  /// istemal karna hai (poora kabhi nahi dikhate).
+  String? get registeredHint {
+    if (_users.isEmpty) return null;
+    final u = _users.first;
+    final parts = <String>[];
+    if (u.email.trim().isNotEmpty) {
+      final e = u.email.trim();
+      final at = e.indexOf('@');
+      if (at > 2) {
+        parts.add('${e.substring(0, 2)}***${e.substring(at)}');
+      } else {
+        parts.add('***$e');
+      }
+    }
+    final ph = _canonPhone(u.phone);
+    if (ph.length >= 7) {
+      parts.add('${ph.substring(0, 4)}***${ph.substring(ph.length - 4)}');
+    }
+    return parts.isEmpty ? null : parts.join('  •  ');
   }
 
   bool get hasAnyUser => _hasAnyUserCached;
@@ -213,8 +256,12 @@ class AuthService {
   Future<AuthResult> login(String identifier, String password) async {
     final user = await findByIdentifier(identifier);
     if (user == null) {
-      return const AuthResult.fail(
-          'Ye email/number registered nahi hai');
+      final hint = registeredHint;
+      return AuthResult.fail(hint != null
+          ? 'Ye email/number registered nahi hai.\n'
+              'Is phone par account is par hai: $hint\n'
+              'Wahi email/number likhen — number 03... ya +92... dono chalenge.'
+          : 'Ye email/number registered nahi hai');
     }
     if (user.passwordHash != _hash(password, user.id)) {
       return const AuthResult.fail('Password ghalat hai');
@@ -229,8 +276,11 @@ class AuthService {
       String identifier, String password, String confirm) async {
     final user = await findByIdentifier(identifier);
     if (user == null) {
-      return const AuthResult.fail(
-          'Ye email/number registered nahi hai');
+      final hint = registeredHint;
+      return AuthResult.fail(hint != null
+          ? 'Ye email/number registered nahi hai.\n'
+              'Is phone par account is par hai: $hint'
+          : 'Ye email/number registered nahi hai');
     }
     if (password.length < 4) {
       return const AuthResult.fail(

@@ -321,6 +321,12 @@ class _AuthScreenState extends State<AuthScreen> {
                   style:
                       AppText.caption.copyWith(color: Colors.white60),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'QistBook v$kAppVersion',
+                  style:
+                      AppText.caption.copyWith(color: Colors.white38),
+                ),
               ],
             ),
           ),
