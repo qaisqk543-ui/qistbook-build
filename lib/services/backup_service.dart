@@ -73,9 +73,11 @@ class BackupService {
   /// Restore ke liye .db file chuno. Sirf valid QistBook DB accept hoti hai.
   static Future<File?> pickBackupFile() async {
     try {
+      // FileType.any (v1.0.37): custom 'json' filter kai phones par file ko
+      // grey/select-na-hone-wali bana deta tha — Qais ki shikayat. Ab har
+      // file select ho sakti hai; durust hona isValidBackup check karta hai.
       final res = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['json'],
+        type: FileType.any,
         dialogTitle: 'Backup file (.json) chuno',
       );
       if (res == null || res.files.single.path == null) return null;

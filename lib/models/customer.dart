@@ -189,6 +189,7 @@ class Customer {
   String fatherName; // S/O or W/O
   String cell; // also the WhatsApp number
   String telRes;
+  String email; // customer ki email — haath se add/edit hoti hai (v1.0.37)
   String cnic;
   String resAddress;
   String offAddress;
@@ -255,6 +256,7 @@ class Customer {
     this.fatherName = '',
     this.cell = '',
     this.telRes = '',
+    this.email = '',
     this.cnic = '',
     this.resAddress = '',
     this.offAddress = '',
@@ -315,6 +317,7 @@ class Customer {
         'fatherName': fatherName,
         'cell': cell,
         'telRes': telRes,
+        'email': email,
         'cnic': cnic,
         'resAddress': resAddress,
         'offAddress': offAddress,
@@ -366,6 +369,7 @@ class Customer {
         fatherName: (m['fatherName'] ?? '').toString(),
         cell: (m['cell'] ?? '').toString(),
         telRes: (m['telRes'] ?? '').toString(),
+        email: (m['email'] ?? '').toString(),
         cnic: (m['cnic'] ?? '').toString(),
         resAddress: (m['resAddress'] ?? '').toString(),
         offAddress: (m['offAddress'] ?? '').toString(),

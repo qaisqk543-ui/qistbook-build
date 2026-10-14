@@ -100,35 +100,50 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
 
   // ------------------------------------------------------------ edit dialogs
 
+  /// Numbers + email add/edit (v1.0.37): Qais ki shikayat thi ke customer
+  /// page par number/email likhne ka option nazar hi nahi ata — is liye ab
+  /// teeno fields ek hi wazeh dialog me hain aur page par labeled button bhi.
   Future<void> _editPhones() async {
     if (!await requireEdit(context)) return;
     final cellCtl = TextEditingController(text: c.cell);
     final telCtl = TextEditingController(text: c.telRes);
+    final emailCtl = TextEditingController(text: c.email);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Contact numbers'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: cellCtl,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Cell / WhatsApp',
-                border: OutlineInputBorder(),
+        title: const Text('Number / Email add ya edit karo'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: cellCtl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Mobile number (Cell / WhatsApp)',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: telCtl,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Tel (Res.)',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 10),
+              TextField(
+                controller: telCtl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Doosra number (Tel / Ghar)',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+              TextField(
+                controller: emailCtl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -143,6 +158,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     if (ok == true) {
       c.cell = cellCtl.text.trim();
       c.telRes = telCtl.text.trim();
+      c.email = emailCtl.text.trim();
       await _persist();
     }
   }
@@ -301,6 +317,17 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          // Wazeh labeled button (v1.0.37) — chhota pencil icon Qais ko
+          // nazar nahi aya tha; ab number/email edit yahan se seedha khulta hai.
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.edit),
+              label: const Text('Mobile number / Email add ya edit karo'),
+              onPressed: _editPhones,
+            ),
+          ),
+          const SizedBox(height: 8),
           _card('Account Information', [
             _kv('A/C No.', c.accountNo),
             _kv('Customer Code', c.customerCode),
@@ -317,6 +344,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             _kv('S/O or W/O', c.fatherName),
             _kv('Tel (Res.)', c.telRes),
             _kv('Cell', c.cell),
+            _kv('Email', c.email),
             _kv('CNIC', c.cnic),
             _kv('House Owner', c.houseOwner ? 'Yes' : ''),
             _kv('Married', c.married ? 'Yes' : ''),
@@ -333,7 +361,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.edit, size: 20),
-                    tooltip: 'Contact numbers edit karo',
+                    tooltip: 'Number / Email edit karo',
                     onPressed: _editPhones,
                   ),
                   IconButton(

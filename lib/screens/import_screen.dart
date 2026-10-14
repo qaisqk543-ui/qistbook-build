@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,7 @@ import 'package:pdfx/pdfx.dart';
 import 'package:provider/provider.dart';
 
 import '../models/customer.dart';
+import '../services/ai_scan_service.dart';
 import '../services/customer_store.dart';
 import '../services/error_log.dart';
 import '../services/parsers.dart';
@@ -100,6 +102,32 @@ class _ImportScreenState extends State<ImportScreen> {
   /// download hota hai; pehli koshish fail ho to thodi der ruk kar doosri
   /// aksar kamyab ho jati hai. Aakhri ghalti _lastOcrError me rehti hai
   /// taake 0-rows wale banner me asal wajah likhi ja sake.
+  /// Khud-behtar OCR (v1.0.37): ek page ko DO tarah parho — asal photo aur
+  /// saaf (grayscale+contrast) version — aur zyada words wala result lo.
+  /// Gallery ke halke misread aksar ek hi variant par hote hain; doosra
+  /// variant unhe theek kar deta hai. Ek variant throw kare to doosra
+  /// chalta hai; dono throw karen to error upar (failed-pages me).
+  Future<List<OcrLine>> _ocrBestLines(String path) async {
+    final enhanced = await _enhanceImage(path);
+    List<OcrLine>? best;
+    var bestWords = -1;
+    Object? firstError;
+    for (final p in [enhanced, path].toSet()) {
+      try {
+        final lines = await _ocrImageLines(p);
+        final words = lines.fold(0, (a, l) => a + l.words.length);
+        if (words > bestWords) {
+          best = lines;
+          bestWords = words;
+        }
+      } catch (e) {
+        firstError ??= e;
+      }
+    }
+    if (best != null) return best;
+    throw firstError ?? Exception('OCR fail');
+  }
+
   Future<List<OcrLine>> _ocrImageLines(String path) async {
     try {
       return await _ocrImageLinesOnce(path);
@@ -208,7 +236,7 @@ class _ImportScreenState extends State<ImportScreen> {
           final page = await doc.getPage(i);
           try {
             final img = await page.render(
-                width: page.width * 2,
+                width: page.width * 3,
                 height: page.height * 2,
                 format: PdfPageImageFormat.png);
             final bytes = img?.bytes;
@@ -307,16 +335,9 @@ class _ImportScreenState extends State<ImportScreen> {
     final x = await _picker.pickImage(
         source: ImageSource.camera, imageQuality: 95);
     if (x != null) {
-      _clearNotice();
-      if (!mounted) return;
-      setState(() {
-        _busy = true;
-        _status = 'Photo saaf kar rahe hain…';
-      });
-      final enhanced = await _enhanceImage(x.path);
-      if (!mounted) return;
-      setState(() => _status = 'Parh rahe hain…');
-      await _processImages([enhanced]);
+      // Enhancement ab _ocrBestLines ke andar hota hai (asal + saaf, dono
+      // par OCR karke behtar result) — yahan asal path hi bhejo.
+      await _processImages([x.path]);
     }
   }
 
@@ -336,20 +357,8 @@ class _ImportScreenState extends State<ImportScreen> {
     try {
       final xs = await _picker.pickMultiImage(imageQuality: 95);
       if (xs.isEmpty) return; // user ne cancel kiya — yehi waahid silent return
-      _clearNotice();
-      setState(() {
-        _busy = true;
-        _status = 'Photos saaf kar rahe hain…';
-      });
-      final enhanced = <String>[];
-      for (var i = 0; i < xs.length; i++) {
-        if (mounted) {
-          setState(() => _status = 'Photo ${i + 1}/${xs.length} saaf ho rahi hai…');
-        }
-        enhanced.add(await _enhanceImage(xs[i].path));
-      }
-      if (!mounted) return;
-      await _processImages(enhanced);
+      // Enhancement ab _ocrBestLines ke andar (asal + saaf dono par OCR).
+      await _processImages(xs.map((x) => x.path).toList());
     } catch (e) {
       _fail('Gallery se photos nahi aa sakin: $e\n'
           'Photos ki permission check karen (Settings → Apps → QistBook → Permissions).',
@@ -475,6 +484,110 @@ class _ImportScreenState extends State<ImportScreen> {
     }
   }
 
+  // ------------------------------------------------------------ AI Scan (internet)
+
+  /// Method 5: AI Scan — page ki photo Gemini vision ko, saaf JSON rows wapas.
+  /// Ye rows waheN review/confirm pipeline me jati hain jo OCR wali rows
+  /// use karti hain (math-check badges waghera same). Offline OCR untouched.
+  Future<void> _aiScan() async {
+    try {
+      if (_docType != DocType.outstanding) {
+        _fail('AI Scan abhi sirf Outstanding Report ke liye hai.\n'
+            'Upar "Outstanding Report" select karke phir AI Scan try karo.',
+            screen: 'Import AI scan');
+        return;
+      }
+      // Internet check pehle.
+      final conn = await Connectivity().checkConnectivity();
+      final online = conn.contains(ConnectivityResult.mobile) ||
+          conn.contains(ConnectivityResult.wifi) ||
+          conn.contains(ConnectivityResult.ethernet) ||
+          conn.contains(ConnectivityResult.vpn);
+      if (!online) {
+        _fail('AI Scan ke liye internet chahiye.\n'
+            'Offline scan (Document scan / Gallery) use karo — wo bina internet ke chalta hai.',
+            screen: 'Import AI scan');
+        return;
+      }
+      final key = await AiScanService.getKey();
+      if (key == null) {
+        _fail('AI Scan ke liye API key lagana zaroori hai.\n'
+            'Profile → "AI Scan API Key (Gemini)" me apni FREE Gemini key dalo (2 minute ka kaam).',
+            screen: 'Import AI scan');
+        return;
+      }
+      // Photo lo (document scanner reuse) — cancel silent.
+      final pages = await _captureAiPages();
+      if (pages == null || pages.isEmpty) return;
+      _clearNotice();
+      setState(() {
+        _busy = true;
+        _status = 'AI parh raha hai…';
+      });
+      final rows = <OutstandingRow>[];
+      final failed = <String>[];
+      for (var i = 0; i < pages.length; i++) {
+        if (mounted) {
+          setState(() =>
+              _status = 'AI page ${i + 1}/${pages.length} parh raha hai…');
+        }
+        // Ek page fail ho to baqi pages ki rows ZAYA NAHI hotin.
+        final res = await AiScanService.scanPage(pages[i], key);
+        rows.addAll(res.rows);
+        failed.addAll(res.failed);
+      }
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _status = '';
+        _rows = rows;
+        _failed = failed;
+        _groups = [];
+        _pageTotalOk = null;
+        _pageTotalDue = 0;
+        _parsedTotalDue =
+            rows.fold(0.0, (a, r) => a + r.currentDue);
+        if (rows.isEmpty) {
+          _noticeIsError = true;
+          _notice = 'AI se koi row nahi nikli (${pages.length} page(s)).\n'
+              'Photo dobara seedhi/saaf lo, ya neeche na parhi gayi wajuhat dekho.';
+        } else {
+          _notice = '';
+        }
+      });
+    } catch (e) {
+      _fail('AI Scan me masla: $e', error: e, screen: 'Import AI scan');
+    }
+  }
+
+  /// AI Scan ke liye pages capture karo (document scanner reuse).
+  /// null = user ne cancel kiya (silent) ya photo nahi li ja saki (message shown).
+  Future<List<String>?> _captureAiPages() async {
+    DocumentScanner? scanner;
+    try {
+      scanner = DocumentScanner(
+        options: DocumentScannerOptions(
+          documentFormats: const {DocumentFormat.jpeg},
+          pageLimit: 20,
+          mode: ScannerMode.full,
+          isGalleryImport: true,
+        ),
+      );
+      final result = await scanner.scanDocument();
+      final images = result.images ?? [];
+      if (images.isEmpty) return null; // user ne cancel kiya
+      return images;
+    } catch (e) {
+      _fail('AI Scan ke liye photo nahi li ja saki: $e',
+          error: e, screen: 'Import AI scan');
+      return null;
+    } finally {
+      try {
+        await scanner?.close();
+      } catch (_) {}
+    }
+  }
+
   // ------------------------------------------------------------ process
 
   /// Har page alag try/catch me — ek page fail ho to baqi pages ka
@@ -495,7 +608,7 @@ class _ImportScreenState extends State<ImportScreen> {
         setState(() => _status = 'Page ${i + 1}/${paths.length}…');
       }
       try {
-        pages.add(await _ocrImageLines(paths[i]));
+        pages.add(await _ocrBestLines(paths[i]));
       } catch (e) {
         ErrorLog.log('Import OCR page ${i + 1}', e);
         _lastOcrError = '$e';
@@ -876,6 +989,20 @@ class _ImportScreenState extends State<ImportScreen> {
           title: 'Gallery se photos',
           subtitle: 'Pehle se li hui tasveeren chunen',
           onPressed: _pickGallery,
+        ),
+        const SizedBox(height: 8),
+        _methodButton(
+          icon: Icons.auto_awesome,
+          title: 'AI Scan (internet se saaf parhai)',
+          subtitle: 'AI table parh kar saaf rows banata hai — tez aur ghalti-kam',
+          onPressed: _aiScan,
+        ),
+        const Padding(
+          padding: EdgeInsets.only(top: 4, bottom: 8, left: 4),
+          child: Text(
+            'Photo AI service ko jati hai — sirf jab aap AI Scan chunein.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
         ),
         const SizedBox(height: 8),
         _methodButton(

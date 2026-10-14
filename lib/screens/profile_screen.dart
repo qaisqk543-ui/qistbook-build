@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
+import '../services/ai_scan_service.dart';
 import '../services/app_lock_service.dart';
 import '../services/app_settings.dart';
 import '../services/auth_service.dart';
@@ -41,12 +42,70 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String get _uid => _auth.currentUser!.id;
   bool _pinOn = false;
   String _shopName = defaultShopName;
+  bool _aiKeySet = false;
 
   @override
   void initState() {
     super.initState();
     _loadPin();
     _loadShopName();
+    _loadAiKey();
+  }
+
+  Future<void> _loadAiKey() async {
+    final has = await AiScanService.hasKey();
+    if (mounted) setState(() => _aiKeySet = has);
+  }
+
+  /// AI Scan ke liye free Gemini API key — sirf is phone par save hoti hai.
+  Future<void> _editAiKey() async {
+    final existing = await AiScanService.getKey();
+    final ctrl = TextEditingController(text: existing ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('AI Scan API Key (Gemini)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              obscureText: true,
+              style: AppText.body,
+              decoration: const InputDecoration(
+                  labelText: 'Gemini API key (AIza…)'),
+            ),
+            const SizedBox(height: AppSpace.s),
+            Text(
+              'Free key: Google AI Studio (aistudio.google.com) → Get API Key → Create.\n'
+              'Key sirf is phone me rehti hai, kahin upload nahi hoti.',
+              style: AppText.caption.copyWith(color: AppColors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    final key = ctrl.text.trim();
+    ctrl.dispose();
+    if (ok != true || !mounted) return;
+    if (key.isEmpty) {
+      showAppSnack(context, 'Key khaali nahi ho sakti');
+      return;
+    }
+    await AiScanService.saveKey(key);
+    if (mounted) {
+      setState(() => _aiKeySet = true);
+      showAppSnack(context, 'AI Scan key save ho gayi ✓');
+    }
   }
 
   Future<void> _loadShopName() async {
@@ -360,6 +419,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
               trailing: const Icon(Icons.edit_rounded,
                   color: AppColors.primary),
               onTap: _editShopName,
+            ),
+          ),
+          const SizedBox(height: AppSpace.s),
+          Card(
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: AppSpace.m,
+                  vertical: AppSpace.s),
+              leading: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                    color: AppColors.tintBlue,
+                    borderRadius:
+                        BorderRadius.circular(16)),
+                child: const Icon(Icons.auto_awesome,
+                    size: 30, color: Colors.blue),
+              ),
+              title: const Text('AI Scan API Key (Gemini)',
+                  style: AppText.bodyBold),
+              subtitle: Text(
+                  _aiKeySet
+                      ? 'Key lagi hui hai ✓ — AI Scan tayaar'
+                      : 'Nahi lagi — AI Scan ke liye zaroori (free)',
+                  style: AppText.body.copyWith(fontSize: 14)),
+              trailing: const Icon(Icons.edit_rounded,
+                  color: AppColors.primary),
+              onTap: _editAiKey,
             ),
           ),
           const SizedBox(height: AppSpace.m),

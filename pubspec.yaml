@@ -1,7 +1,7 @@
 name: kistbook
 description: Kist Book - installment (qist) management app for shops.
 publish_to: 'none'
-version: 1.0.36+37
+version: 1.0.37+38
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -16,6 +16,8 @@ dependencies:
   # Pick images (camera/gallery) and PDF files
   image_picker: ^1.2.3
   file_picker: ^8.0.0
+  # AI Scan (internet): page photo Gemini vision ko bhej kar saaf JSON rows
+  http: ^1.2.2
   # Render PDF pages to images so OCR can read them
   pdfx: ^2.11.0
   # Firebase: login (phone OTP / email) + private per-user cloud sync
